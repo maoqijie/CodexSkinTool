@@ -98,6 +98,7 @@ struct ContentView: View {
                             draft: $model.customDraft,
                             backgroundURL: model.customBackgroundURL,
                             chooseBackground: model.chooseBackground,
+                            importBackground: model.importBackground,
                             removeBackground: model.removeBackground
                         )
                         .frame(maxWidth: 760)

@@ -6,7 +6,9 @@ struct CustomThemeEditor: View {
     @Binding var draft: CustomThemeDraft
     let backgroundURL: URL?
     let chooseBackground: () -> Void
+    let importBackground: (URL) -> Bool
     let removeBackground: () -> Void
+    @State private var isDropTarget = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -53,12 +55,12 @@ struct CustomThemeEditor: View {
             Divider()
 
             HStack(alignment: .center, spacing: 14) {
-                Image(systemName: backgroundURL == nil ? "photo.badge.plus" : "photo.fill")
+                Image(systemName: isDropTarget ? "square.and.arrow.down.fill" : backgroundURL == nil ? "photo.badge.plus" : "photo.fill")
                     .font(.system(size: 22))
                     .foregroundStyle(AppPalette.accent)
                     .frame(width: 30)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(backgroundURL?.lastPathComponent ?? "未选择背景图片")
+                    Text(isDropTarget ? "松开即可导入" : backgroundURL?.lastPathComponent ?? "拖入图片，或选择本地文件")
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
                     Text("PNG、JPEG、HEIC、TIFF 或 WebP，最大 16 MB")
@@ -71,6 +73,29 @@ struct CustomThemeEditor: View {
                 }
                 Button(backgroundURL == nil ? "选择图片" : "更换图片", systemImage: "photo.on.rectangle", action: chooseBackground)
             }
+            .frame(minHeight: 44)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(isDropTarget ? AppPalette.accent.opacity(0.08) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(
+                        isDropTarget ? AppPalette.accent : AppPalette.line,
+                        style: StrokeStyle(lineWidth: isDropTarget ? 2 : 1, dash: [6, 4])
+                    )
+            }
+            .contentShape(Rectangle())
+            .dropDestination(for: URL.self) { urls, _ in
+                guard urls.count == 1, let url = urls.first else { return false }
+                return importBackground(url)
+            } isTargeted: { targeted in
+                isDropTarget = targeted
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("背景图片")
+            .accessibilityValue(backgroundURL == nil ? "未选择" : "已选择")
+            .accessibilityHint("可将单张本地图片拖入此区域，或使用选择图片按钮")
 
             if backgroundURL != nil {
                 HStack(spacing: 22) {

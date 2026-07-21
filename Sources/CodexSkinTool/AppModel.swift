@@ -65,12 +65,19 @@ final class AppModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        _ = importBackground(from: url)
+    }
+
+    @discardableResult
+    func importBackground(from url: URL) -> Bool {
+        guard !isBusy, url.isFileURL else { return false }
         runOperation {
             self.customDraft = try await self.service.importBackground(from: url, into: self.customDraft)
             self.customBackgroundURL = await self.service.backgroundURL(for: self.customDraft)
             self.selectedThemeID = "custom"
             return "已导入背景图片"
         }
+        return true
     }
 
     func removeBackground() {
