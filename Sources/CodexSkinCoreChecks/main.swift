@@ -129,6 +129,20 @@ func checkEditor() throws {
     let restoredSectionText = String(decoding: restoredSection, as: UTF8.self)
     try expect(restoredSectionText.contains("[desktop.appearanceDarkChromeTheme]"), "未恢复原始 Chrome 子表")
     try expect(restoredSectionText.contains("[features]\nmemories = true"), "恢复 Chrome 子表误改后续配置")
+
+    let conflictingTheme = """
+    [desktop]
+    appearanceDarkChromeTheme = { accent = "#000000" }
+
+    [desktop.appearanceDarkChromeTheme]
+    accent = "#111111"
+    """
+    do {
+        _ = try edit(conflictingTheme, themeID: "tokyo-night")
+        throw CheckFailure.failed("Chrome 内联值与子表冲突未 fail closed")
+    } catch ThemeServiceError.invalidConfiguration {
+        // Expected.
+    }
 }
 
 func checkCatalog() throws {
