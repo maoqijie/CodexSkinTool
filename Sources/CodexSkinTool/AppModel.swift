@@ -4,8 +4,29 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum AppSection: String, CaseIterable, Identifiable {
+    case themes
+    case settings
+    case about
+
+    var id: Self { self }
+}
+
+private enum ApplyTarget {
+    case builtIn(Theme)
+    case custom(CustomThemeDraft)
+
+    var name: String {
+        switch self {
+        case .builtIn(let theme): theme.name
+        case .custom(let draft): draft.theme.name
+        }
+    }
+}
+
 @MainActor
 final class AppModel: ObservableObject {
+    @Published var selectedSection = AppSection.themes
     @Published var selectedThemeID: String
     @Published var status = ThemeServiceStatus.checking
     @Published var isBusy = false
@@ -18,6 +39,8 @@ final class AppModel: ObservableObject {
     let themes: [Theme]
     private let service: ThemeService
     private let appService = CodexAppService()
+    private var pendingApplyTarget: ApplyTarget?
+    private var didLoadCustomDraft = false
 
     init(service: ThemeService) {
         self.service = service
@@ -31,29 +54,63 @@ final class AppModel: ObservableObject {
     }
 
     var isCustomSelected: Bool { selectedThemeID == "custom" }
+    var isAboutSelected: Bool { selectedSection == .about }
 
     func refresh() {
-        Task { await loadStatus() }
+        Task { await loadStatus(loadCustomDraft: !didLoadCustomDraft) }
     }
 
     func requestApply() {
+        requestApply(target: .builtIn(selectedTheme))
+    }
+
+    func requestApplyCustom() {
+        selectedThemeID = "custom"
+        requestApply(target: .custom(customDraft))
+    }
+
+    func requestApplyForCurrentPage() {
+        selectedSection == .settings ? requestApplyCustom() : requestApply()
+    }
+
+    func prepareThemeGallery() {
+        guard isCustomSelected else { return }
+        selectedThemeID = themes.first?.id ?? ""
+    }
+
+    func prepareSettings() {
+        selectedThemeID = "custom"
+    }
+
+    func confirmPendingApply() {
+        guard let target = pendingApplyTarget else { return }
+        pendingApplyTarget = nil
+        performApply(target)
+    }
+
+    func cancelPendingApply() {
+        pendingApplyTarget = nil
+    }
+
+    private func requestApply(target: ApplyTarget) {
+        pendingApplyTarget = target
         if status.app.isRunning {
             showRestartConfirmation = true
         } else {
-            apply(restart: true)
+            pendingApplyTarget = nil
+            performApply(target)
         }
     }
 
-    func apply(restart: Bool) {
+    private func performApply(_ target: ApplyTarget) {
         runOperation {
-            if self.isCustomSelected {
-                _ = try await self.service.applyCustomAndRestart(self.customDraft)
-            } else if restart {
-                _ = try await self.service.applyAndRestart(themeID: self.selectedTheme.id)
-            } else {
-                _ = try await self.service.apply(themeID: self.selectedTheme.id)
+            switch target {
+            case .builtIn(let theme):
+                _ = try await self.service.applyAndRestart(themeID: theme.id)
+            case .custom(let draft):
+                _ = try await self.service.applyCustomAndRestart(draft)
             }
-            return "已应用「\(self.selectedTheme.name)」"
+            return "已应用「\(target.name)」"
         }
     }
 
@@ -126,15 +183,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func loadStatus() async {
+    private func loadStatus(loadCustomDraft: Bool = false) async {
         do {
-            customDraft = try await service.customTheme()
-            customBackgroundURL = await service.backgroundURL(for: customDraft)
-            status = try await service.status()
-            if let activeID = status.selectedThemeID,
-               activeID == "custom" || themes.contains(where: { $0.id == activeID }) {
-                selectedThemeID = activeID
+            if loadCustomDraft {
+                let draft = try await service.customTheme()
+                customDraft = draft
+                customBackgroundURL = await service.backgroundURL(for: draft)
+                didLoadCustomDraft = true
             }
+            status = try await service.status()
         } catch {
             errorMessage = error.localizedDescription
         }

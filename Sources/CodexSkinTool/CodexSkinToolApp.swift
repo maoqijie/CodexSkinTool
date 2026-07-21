@@ -20,9 +20,13 @@ struct CodexSkinToolApp: App {
         .windowToolbarStyle(.unifiedCompact)
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .appInfo) {
+                Button("关于 CodexSkinTool") { model.selectedSection = .about }
+            }
             CommandMenu("主题") {
-                Button("应用所选主题") { model.requestApply() }
+                Button("应用当前页面主题") { model.requestApplyForCurrentPage() }
                     .keyboardShortcut(.return, modifiers: [.command])
+                    .disabled(model.isAboutSelected)
                 Button("恢复原始外观") { model.restore() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
             }

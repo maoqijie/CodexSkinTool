@@ -164,6 +164,15 @@ func checkCatalog() throws {
     }
 }
 
+func checkAppVersion() throws {
+    let current = try require(AppVersion("0.2.2"), "当前版本解析失败")
+    try expect(try require(AppVersion("v0.3.0"), "v 前缀版本解析失败") > current, "新版本比较失败")
+    try expect(try require(AppVersion("0.2.2.0"), "补零版本解析失败") == current, "补零版本应相等")
+    try expect(try require(AppVersion("0.2.10"), "多位版本解析失败") > current, "版本比较不应按字符串排序")
+    try expect(AppVersion("0.2.beta") == nil, "非法版本未被拒绝")
+    try expect(AppVersion("0..2") == nil, "空版本段未被拒绝")
+}
+
 func checkCustomTheme() throws {
     var draft = CustomThemeDraft()
     draft.name = "   "
@@ -350,6 +359,7 @@ func checkStore() throws {
 do {
     try checkEditor()
     try checkCatalog()
+    try checkAppVersion()
     try checkCustomTheme()
     try checkStore()
     print("PASS: CodexSkinCoreChecks")
