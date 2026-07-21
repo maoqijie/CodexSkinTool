@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .library(name: "CodexSkinCore", targets: ["CodexSkinCore"]),
         .executable(name: "CodexSkinTool", targets: ["CodexSkinTool"]),
+        .executable(name: "CodexSkinInjector", targets: ["CodexSkinInjector"]),
     ],
     targets: [
         .target(name: "CodexSkinCore"),
@@ -14,6 +15,10 @@ let package = Package(
             name: "CodexSkinTool",
             dependencies: ["CodexSkinCore"],
             resources: [.process("Resources")]
+        ),
+        .executableTarget(
+            name: "CodexSkinInjector",
+            dependencies: ["CodexSkinCore"]
         ),
         .executableTarget(
             name: "CodexSkinCoreChecks",

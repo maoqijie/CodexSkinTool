@@ -90,6 +90,10 @@ public struct Theme: Identifiable, Codable, Equatable, Sendable {
 public typealias SkinTheme = Theme
 
 public enum ThemeCatalog {
+    public static let supportedCodeThemeIDs = [
+        "codex", "github", "notion", "solarized", "tokyo-night", "rose-pine", "dracula", "everforest", "vercel"
+    ]
+
     public static let builtIn: [Theme] = [
         theme("codex-light", "Codex 明亮", "干净克制的 Codex 原生明亮风格", .light, "codex",
               "#0D7C66", "#17211F", "#F7FAF9", 45, "#16835D", "#D13C3C", "#7A5AF8"),

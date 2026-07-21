@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import AppKit
 import CodexSkinCore
 
 enum CheckFailure: Error, CustomStringConvertible {
@@ -163,6 +164,86 @@ func checkCatalog() throws {
     }
 }
 
+func checkCustomTheme() throws {
+    var draft = CustomThemeDraft()
+    draft.name = "   "
+    draft.accent = "not-a-color"
+    draft.ink = "#aabbcc"
+    draft.contrast = 120
+    draft.codeThemeID = "unknown"
+    try expect(draft.theme.name == "我的主题", "空自定义主题名称未回退")
+    try expect(draft.theme.chromeTheme.accent == "#10A37F", "非法自定义颜色未回退")
+    try expect(draft.theme.chromeTheme.ink == "#AABBCC", "自定义颜色未标准化")
+    try expect(draft.theme.chromeTheme.contrast == 100, "自定义对比度未限制")
+    try expect(draft.theme.codeThemeId == "codex", "非法代码主题未回退")
+    try expect(draft.skinSettings == nil, "无图自定义主题不应生成图片设置")
+
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("CodexSkinCustomChecks-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let store = CustomThemeStore(supportDirectoryURL: root)
+    try store.save(draft)
+    try expect(try store.load() == draft, "自定义主题保存后不一致")
+    try expect(fileMode(store.draftURL) == 0o600, "自定义主题文件权限不是 0600")
+
+    guard let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: 320,
+        pixelsHigh: 240,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ), let png = bitmap.representation(using: .png, properties: [:]) else {
+        throw CheckFailure.failed("无法生成图片测试夹具")
+    }
+    let source = root.appendingPathComponent("fixture.png")
+    try png.write(to: source)
+    let name = try store.importBackground(from: source)
+    let imported = try require(store.backgroundURL(named: name), "导入图片不存在")
+    try expect(imported.pathExtension == "png", "导入图片未规范化为 PNG")
+    try expect(fileMode(imported) == 0o600, "导入图片权限不是 0600")
+    draft.backgroundImageName = name
+    try expect(draft.skinSettings?.fit == .cover, "图片设置未生成")
+
+    let invalid = root.appendingPathComponent("invalid.png")
+    try Data("not an image".utf8).write(to: invalid)
+    do {
+        _ = try store.importBackground(from: invalid)
+        throw CheckFailure.failed("伪造图片未被拒绝")
+    } catch ThemeServiceError.invalidBackground {
+        // Expected.
+    }
+
+    let tinyBitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: 100,
+        pixelsHigh: 100,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    )!
+    let tinyURL = root.appendingPathComponent("tiny.png")
+    try tinyBitmap.representation(using: .png, properties: [:])!.write(to: tinyURL)
+    do {
+        _ = try store.importBackground(from: tinyURL)
+        throw CheckFailure.failed("过小图片未被拒绝")
+    } catch ThemeServiceError.invalidBackground {
+        // Expected.
+    }
+
+    let symlink = store.backgroundDirectoryURL.appendingPathComponent("linked.png")
+    try FileManager.default.createSymbolicLink(at: symlink, withDestinationURL: source)
+    try expect(store.backgroundURL(named: "linked.png") == nil, "背景符号链接未被拒绝")
+}
+
 struct Fixture {
     let rootURL: URL
     let configURL: URL
@@ -214,7 +295,14 @@ func checkStore() throws {
     let repeated = try Fixture(original: original)
     defer { repeated.cleanup() }
     try repeated.store.apply(theme: repeated.theme, needsRestart: false)
+    let operationCheckpoint = try repeated.store.checkpoint()
+    let checkpointConfig = try Data(contentsOf: repeated.configURL)
+    let checkpointState = try Data(contentsOf: repeated.store.stateURL)
     let second = try require(ThemeCatalog.theme(id: "dracula"), "缺少 Dracula 主题")
+    try repeated.store.apply(theme: second, needsRestart: true)
+    try repeated.store.rollback(to: operationCheckpoint)
+    try expect(try Data(contentsOf: repeated.configURL) == checkpointConfig, "操作前配置快照未精确恢复")
+    try expect(try Data(contentsOf: repeated.store.stateURL) == checkpointState, "操作前状态快照未精确恢复")
     try repeated.store.apply(theme: second, needsRestart: true)
     try expect(!FileManager.default.fileExists(atPath: repeated.store.backupURL.path), "不应备份整份 Codex 配置")
     let stateData = try Data(contentsOf: repeated.store.stateURL)
@@ -262,6 +350,7 @@ func checkStore() throws {
 do {
     try checkEditor()
     try checkCatalog()
+    try checkCustomTheme()
     try checkStore()
     print("PASS: CodexSkinCoreChecks")
 } catch {

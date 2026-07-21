@@ -35,6 +35,10 @@ struct ContentView: View {
                         .tag(theme.id)
                 }
             }
+            Section("自定义") {
+                ThemeRow(theme: model.customDraft.theme, active: model.status.selectedThemeID == "custom")
+                    .tag("custom")
+            }
         }
         .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 210, ideal: 226, max: 260)
@@ -81,9 +85,25 @@ struct ContentView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    ThemePreview(theme: model.selectedTheme)
+                    ThemePreview(
+                        theme: model.selectedTheme,
+                        backgroundURL: model.isCustomSelected ? model.customBackgroundURL : nil,
+                        backgroundOpacity: model.customDraft.backgroundOpacity,
+                        backgroundBlur: model.customDraft.backgroundBlur,
+                        backgroundFit: model.customDraft.backgroundFit
+                    )
                         .frame(maxWidth: 760)
-                    themeDetails
+                    if model.isCustomSelected {
+                        CustomThemeEditor(
+                            draft: $model.customDraft,
+                            backgroundURL: model.customBackgroundURL,
+                            chooseBackground: model.chooseBackground,
+                            removeBackground: model.removeBackground
+                        )
+                        .frame(maxWidth: 760)
+                    } else {
+                        themeDetails
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(24)
@@ -151,6 +171,11 @@ struct ContentView: View {
                     model.restore()
                 }
                 .disabled(model.isBusy)
+            }
+            if model.status.backgroundSkin.active {
+                Label("图片皮肤已启用", systemImage: "photo.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AppPalette.accent)
             }
             if !model.status.app.isRunning && model.status.app.isInstalled {
                 Button("打开 Codex", systemImage: "arrow.up.forward.app") {

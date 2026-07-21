@@ -2,6 +2,7 @@ import AppKit
 import CodexSkinCore
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -11,6 +12,8 @@ final class AppModel: ObservableObject {
     @Published var message: String?
     @Published var errorMessage: String?
     @Published var showRestartConfirmation = false
+    @Published var customDraft = CustomThemeDraft()
+    @Published var customBackgroundURL: URL?
 
     let themes: [Theme]
     private let service: ThemeService
@@ -23,8 +26,11 @@ final class AppModel: ObservableObject {
     }
 
     var selectedTheme: Theme {
-        themes.first(where: { $0.id == selectedThemeID }) ?? themes[0]
+        if selectedThemeID == "custom" { return customDraft.theme }
+        return themes.first(where: { $0.id == selectedThemeID }) ?? themes[0]
     }
+
+    var isCustomSelected: Bool { selectedThemeID == "custom" }
 
     func refresh() {
         Task { await loadStatus() }
@@ -40,12 +46,38 @@ final class AppModel: ObservableObject {
 
     func apply(restart: Bool) {
         runOperation {
-            if restart {
+            if self.isCustomSelected {
+                _ = try await self.service.applyCustomAndRestart(self.customDraft)
+            } else if restart {
                 _ = try await self.service.applyAndRestart(themeID: self.selectedTheme.id)
             } else {
                 _ = try await self.service.apply(themeID: self.selectedTheme.id)
             }
             return "已应用「\(self.selectedTheme.name)」"
+        }
+    }
+
+    func chooseBackground() {
+        let panel = NSOpenPanel()
+        panel.title = "选择背景图片"
+        panel.prompt = "选择"
+        panel.allowedContentTypes = [.png, .jpeg, .heic, .tiff, .webP]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        runOperation {
+            self.customDraft = try await self.service.importBackground(from: url, into: self.customDraft)
+            self.customBackgroundURL = await self.service.backgroundURL(for: self.customDraft)
+            self.selectedThemeID = "custom"
+            return "已导入背景图片"
+        }
+    }
+
+    func removeBackground() {
+        runOperation {
+            self.customDraft = try await self.service.removeBackground(from: self.customDraft)
+            self.customBackgroundURL = nil
+            return "已移除背景图片"
         }
     }
 
@@ -89,9 +121,11 @@ final class AppModel: ObservableObject {
 
     private func loadStatus() async {
         do {
+            customDraft = try await service.customTheme()
+            customBackgroundURL = await service.backgroundURL(for: customDraft)
             status = try await service.status()
             if let activeID = status.selectedThemeID,
-               themes.contains(where: { $0.id == activeID }) {
+               activeID == "custom" || themes.contains(where: { $0.id == activeID }) {
                 selectedThemeID = activeID
             }
         } catch {

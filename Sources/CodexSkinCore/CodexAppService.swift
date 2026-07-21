@@ -18,6 +18,7 @@ public struct CodexAppStatus: Codable, Equatable, Sendable {
 @MainActor
 public final class CodexAppService {
     nonisolated public static let bundleIdentifier = "com.openai.codex"
+    nonisolated public static let officialTeamIdentifier = "2DC432GLL2"
 
     private let workspace: NSWorkspace
     private let fileManager: FileManager
@@ -79,6 +80,62 @@ public final class CodexAppService {
     public func open() throws {
         guard resolveApplicationURL() != nil else { throw ThemeServiceError.appNotInstalled }
         try launch()
+    }
+
+    public func open(remoteDebuggingPort: Int) throws {
+        guard let applicationURL = resolveApplicationURL() else { throw ThemeServiceError.appNotInstalled }
+        try validateOfficialSignature(at: applicationURL)
+        guard (1_024...65_535).contains(remoteDebuggingPort) else {
+            throw ThemeServiceError.backgroundSession("调试端口无效")
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [
+            "-na", applicationURL.path, "--args",
+            "--remote-debugging-address=127.0.0.1",
+            "--remote-debugging-port=\(remoteDebuggingPort)",
+        ]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw ThemeServiceError.restartFailed("无法以图片皮肤模式打开 Codex：\(error.localizedDescription)")
+        }
+        guard process.terminationStatus == 0 else {
+            throw ThemeServiceError.restartFailed("系统未能以图片皮肤模式打开 Codex")
+        }
+    }
+
+    public func validateOfficialInstallation() throws {
+        guard let applicationURL = resolveApplicationURL() else { throw ThemeServiceError.appNotInstalled }
+        try validateOfficialSignature(at: applicationURL)
+    }
+
+    public func runningProcessIdentifiers() -> Set<Int32> {
+        Set(runningApplications().map(\.processIdentifier))
+    }
+
+    private func validateOfficialSignature(at applicationURL: URL) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        process.arguments = [
+            "--verify", "--deep", "--strict",
+            "-R=anchor apple generic and identifier \"\(bundleIdentifier)\" and certificate leaf[subject.OU] = \"\(Self.officialTeamIdentifier)\"",
+            applicationURL.path,
+        ]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            throw ThemeServiceError.backgroundSession("无法验证 Codex 官方签名")
+        }
+        guard process.terminationStatus == 0 else {
+            throw ThemeServiceError.backgroundSession("Codex 签名或发行者不是预期的 OpenAI 官方应用")
+        }
     }
 
     private func resolveApplicationURL() -> URL? {

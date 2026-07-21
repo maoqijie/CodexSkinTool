@@ -21,7 +21,9 @@ RESOURCES="$CONTENTS/Resources"
 ICONSET="$TEMP_ROOT/AppIcon.iconset"
 /bin/mkdir -p "$CONTENTS/MacOS" "$RESOURCES" "$ICONSET"
 /bin/cp "$BIN_DIR/CodexSkinTool" "$CONTENTS/MacOS/CodexSkinTool"
+/bin/cp "$BIN_DIR/CodexSkinInjector" "$CONTENTS/MacOS/CodexSkinInjector"
 /bin/chmod 755 "$CONTENTS/MacOS/CodexSkinTool"
+/bin/chmod 755 "$CONTENTS/MacOS/CodexSkinInjector"
 
 /usr/bin/swift "$ROOT/scripts/generate-icon.swift" "$TEMP_ROOT/AppIcon.png"
 for spec in \

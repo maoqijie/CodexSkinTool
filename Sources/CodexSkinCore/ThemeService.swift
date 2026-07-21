@@ -8,6 +8,8 @@ public enum ThemeServiceError: LocalizedError, Sendable {
     case fileOperation(String)
     case appNotInstalled
     case restartFailed(String)
+    case invalidBackground(String)
+    case backgroundSession(String)
 
     public var errorDescription: String? {
         switch self {
@@ -18,6 +20,8 @@ public enum ThemeServiceError: LocalizedError, Sendable {
         case .fileOperation(let message): message
         case .appNotInstalled: "未找到 Codex Desktop（com.openai.codex）"
         case .restartFailed(let message): message
+        case .invalidBackground(let message): "背景图片无效：\(message)"
+        case .backgroundSession(let message): "图片皮肤启动失败：\(message)"
         }
     }
 }
@@ -28,19 +32,22 @@ public struct ThemeServiceStatus: Sendable {
     public let canRestore: Bool
     public let needsRestart: Bool
     public let app: CodexAppStatus
+    public let backgroundSkin: BackgroundSkinStatus
 
     public init(
         selectedThemeID: String?,
         configExists: Bool,
         canRestore: Bool,
         needsRestart: Bool,
-        app: CodexAppStatus
+        app: CodexAppStatus,
+        backgroundSkin: BackgroundSkinStatus = .inactive
     ) {
         self.selectedThemeID = selectedThemeID
         self.configExists = configExists
         self.canRestore = canRestore
         self.needsRestart = needsRestart
         self.app = app
+        self.backgroundSkin = backgroundSkin
     }
 }
 
@@ -58,6 +65,8 @@ public struct ThemeChangeResult: Sendable {
 
 public actor ThemeService {
     private let store: ConfigurationStore
+    private let customStore: CustomThemeStore
+    private let backgroundSession: BackgroundSkinSession
     private var appService: CodexAppService?
 
     public init(
@@ -65,19 +74,59 @@ public actor ThemeService {
         appService: CodexAppService? = nil
     ) {
         self.store = ConfigurationStore(paths: paths)
+        self.customStore = CustomThemeStore(supportDirectoryURL: paths.supportDirectoryURL)
+        self.backgroundSession = BackgroundSkinSession(supportDirectoryURL: paths.supportDirectoryURL)
         self.appService = appService
     }
 
     public func status() async throws -> ThemeServiceStatus {
         let snapshot = try store.snapshot()
-        let app = await resolvedAppService().status()
+        let service = await resolvedAppService()
+        let backgroundSkin = try await backgroundSession.reconcile(appService: service)
+        let app = await service.status()
         return ThemeServiceStatus(
             selectedThemeID: snapshot.state?.selectedThemeID,
             configExists: snapshot.configExists,
             canRestore: snapshot.backupAvailable,
             needsRestart: snapshot.state?.needsRestart ?? false,
-            app: app
+            app: app,
+            backgroundSkin: backgroundSkin
         )
+    }
+
+    public func customTheme() throws -> CustomThemeDraft {
+        try customStore.load()
+    }
+
+    public func saveCustomTheme(_ draft: CustomThemeDraft) throws {
+        try customStore.save(draft)
+    }
+
+    public func importBackground(from url: URL, into draft: CustomThemeDraft) throws -> CustomThemeDraft {
+        let previousName = draft.backgroundImageName
+        var updated = draft
+        let importedName = try customStore.importBackground(from: url)
+        updated.backgroundImageName = importedName
+        do {
+            try customStore.save(updated)
+        } catch {
+            try? customStore.removeBackground(named: importedName)
+            throw error
+        }
+        if previousName != importedName { try? customStore.removeBackground(named: previousName) }
+        return updated
+    }
+
+    public func removeBackground(from draft: CustomThemeDraft) throws -> CustomThemeDraft {
+        var updated = draft
+        updated.backgroundImageName = nil
+        try customStore.save(updated)
+        try customStore.removeBackground(named: draft.backgroundImageName)
+        return updated
+    }
+
+    public func backgroundURL(for draft: CustomThemeDraft) -> URL? {
+        customStore.backgroundURL(named: draft.backgroundImageName)
     }
 
     @discardableResult
@@ -96,14 +145,55 @@ public actor ThemeService {
 
     @discardableResult
     public func applyAndRestart(themeID: String, timeout: TimeInterval = 10) async throws -> ThemeChangeResult {
-        let result = try await apply(themeID: themeID)
-        try await restartCodex(timeout: timeout)
-        return ThemeChangeResult(changed: result.changed, selectedThemeID: result.selectedThemeID, needsRestart: false)
+        let service = await resolvedAppService()
+        _ = try await backgroundSession.recoverAndStop(appService: service)
+        do {
+            let result = try await apply(themeID: themeID)
+            try await restartCodex(timeout: timeout)
+            return ThemeChangeResult(changed: result.changed, selectedThemeID: result.selectedThemeID, needsRestart: false)
+        } catch {
+            try? await service.terminate(timeout: 5)
+            try? await MainActor.run { try service.open() }
+            throw error
+        }
+    }
+
+    @discardableResult
+    public func applyCustomAndRestart(_ draft: CustomThemeDraft) async throws -> ThemeChangeResult {
+        let checkpoint = try store.checkpoint()
+        try customStore.save(draft)
+        do {
+            let app = await resolvedAppService().status()
+            try store.apply(theme: draft.theme, needsRestart: app.isRunning)
+            if let skin = draft.skinSettings {
+                try await backgroundSession.start(
+                    settings: skin,
+                    theme: draft.theme,
+                    appService: await resolvedAppService()
+                )
+                try store.markRestarted()
+            } else {
+                _ = try await backgroundSession.recoverAndStop(appService: await resolvedAppService())
+                try await restartCodex()
+            }
+        } catch {
+            do {
+                try store.rollback(to: checkpoint)
+            } catch {
+                throw ThemeServiceError.invalidState("图片皮肤失败，且无法回滚本次外观变更：\(error.localizedDescription)")
+            }
+            let service = await resolvedAppService()
+            try? await MainActor.run { try service.open() }
+            throw error
+        }
+        return ThemeChangeResult(changed: true, selectedThemeID: draft.theme.id, needsRestart: false)
     }
 
     @discardableResult
     public func restore() async throws -> ThemeChangeResult {
-        let app = await resolvedAppService().status()
+        let service = await resolvedAppService()
+        _ = try await backgroundSession.recoverAndStop(appService: service)
+        let app = await service.status()
         let changed = try store.restore(needsRestart: app.isRunning)
         return ThemeChangeResult(
             changed: changed,
@@ -114,9 +204,16 @@ public actor ThemeService {
 
     @discardableResult
     public func restoreAndRestart(timeout: TimeInterval = 10) async throws -> ThemeChangeResult {
-        let result = try await restore()
-        try await restartCodex(timeout: timeout)
-        return ThemeChangeResult(changed: result.changed, selectedThemeID: nil, needsRestart: false)
+        do {
+            let result = try await restore()
+            try await restartCodex(timeout: timeout)
+            return ThemeChangeResult(changed: result.changed, selectedThemeID: nil, needsRestart: false)
+        } catch {
+            let service = await resolvedAppService()
+            try? await service.terminate(timeout: 5)
+            try? await MainActor.run { try service.open() }
+            throw error
+        }
     }
 
     public func restartCodex(timeout: TimeInterval = 10) async throws {

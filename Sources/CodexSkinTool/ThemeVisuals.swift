@@ -51,6 +51,10 @@ struct ThemeSwatches: View {
 
 struct ThemePreview: View {
     let theme: Theme
+    var backgroundURL: URL? = nil
+    var backgroundOpacity: Double = 0.28
+    var backgroundBlur: Double = 0
+    var backgroundFit: BackgroundFit = .cover
 
     private var surface: Color { Color(hex: theme.chromeTheme.surface) }
     private var ink: Color { Color(hex: theme.chromeTheme.ink) }
@@ -58,11 +62,16 @@ struct ThemePreview: View {
 
     var body: some View {
         GeometryReader { proxy in
-            HStack(spacing: 0) {
-                sidebar(width: max(118, proxy.size.width * 0.27))
-                workspace
+            ZStack {
+                surface
+                if let backgroundURL, let image = NSImage(contentsOf: backgroundURL) {
+                    background(image)
+                }
+                HStack(spacing: 0) {
+                    sidebar(width: max(118, proxy.size.width * 0.27))
+                    workspace
+                }
             }
-            .background(surface)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -72,6 +81,23 @@ struct ThemePreview: View {
         .aspectRatio(1.52, contentMode: .fit)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(theme.name) 主题预览")
+    }
+
+    @ViewBuilder
+    private func background(_ image: NSImage) -> some View {
+        if backgroundFit == .cover {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .blur(radius: backgroundBlur / 2)
+                .opacity(backgroundOpacity)
+        } else {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .blur(radius: backgroundBlur / 2)
+                .opacity(backgroundOpacity)
+        }
     }
 
     private func sidebar(width: CGFloat) -> some View {
@@ -100,7 +126,11 @@ struct ThemePreview: View {
         .foregroundStyle(ink.opacity(0.84))
         .padding(12)
         .frame(width: width, alignment: .topLeading)
-        .background(ink.opacity(theme.mode == .dark ? 0.08 : 0.035))
+        .background(
+            backgroundURL == nil
+                ? ink.opacity(theme.mode == .dark ? 0.08 : 0.035)
+                : surface.opacity(0.82)
+        )
         .overlay(alignment: .trailing) { Rectangle().fill(ink.opacity(0.1)).frame(width: 1) }
     }
 
@@ -140,6 +170,7 @@ struct ThemePreview: View {
             .padding(.horizontal, 22)
         }
         .foregroundStyle(ink)
+        .background(surface.opacity(backgroundURL == nil ? 1 : 0.56))
     }
 
     private var composer: some View {

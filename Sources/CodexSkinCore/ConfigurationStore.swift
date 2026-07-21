@@ -50,6 +50,11 @@ public struct ConfigurationSnapshot: Sendable {
     public let state: PersistedThemeState?
 }
 
+public struct ConfigurationCheckpoint: Sendable {
+    fileprivate let configData: Data?
+    fileprivate let stateData: Data?
+}
+
 public struct ConfigurationStore {
     public let paths: ConfigurationPaths
     private let fileManager: FileManager
@@ -80,6 +85,20 @@ public struct ConfigurationStore {
             backupAvailable: state != nil,
             state: state
         )
+    }
+
+    public func checkpoint() throws -> ConfigurationCheckpoint {
+        ConfigurationCheckpoint(
+            configData: fileManager.fileExists(atPath: paths.configURL.path)
+                ? try readData(at: paths.configURL, context: "读取操作前 Codex 配置") : nil,
+            stateData: fileManager.fileExists(atPath: stateURL.path)
+                ? try readData(at: stateURL, context: "读取操作前工具状态") : nil
+        )
+    }
+
+    public func rollback(to checkpoint: ConfigurationCheckpoint) throws {
+        try restoreFile(at: paths.configURL, data: checkpoint.configData)
+        try restoreFile(at: stateURL, data: checkpoint.stateData)
     }
 
     public func apply(theme: Theme, needsRestart: Bool) throws {
@@ -173,6 +192,18 @@ public struct ConfigurationStore {
             at: paths.supportDirectoryURL,
             withIntermediateDirectories: true
         )
+    }
+
+    private func restoreFile(at url: URL, data: Data?) throws {
+        if let data {
+            try atomicWrite(data, to: url)
+        } else if fileManager.fileExists(atPath: url.path) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                throw localizedFileError(error, context: "回滚 \(url.lastPathComponent)")
+            }
+        }
     }
 
     private func readState() throws -> PersistedThemeState? {
