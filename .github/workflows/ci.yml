@@ -1,0 +1,15 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify core and release build
+        run: ./scripts/test.sh
+      - name: Bundle application
+        run: ./scripts/build-app.sh
