@@ -66,7 +66,7 @@ OpenAI 的 Codex Desktop 设置支持基础主题、强调色、背景/前景色
 ./scripts/build-app.sh
 ```
 
-`CodexSkinCoreChecks` 覆盖 TOML 注释/未知键保留、多行主题替换、重复键拒绝、首次备份、重复换肤、换肤后其他设置合并恢复、CRLF 字节恢复和权限校验。`Tests/Fixtures/StrictConfig/config.toml` 可用于当前 Codex CLI 的严格配置解析：
+`CodexSkinCoreChecks` 覆盖 TOML 注释/未知键保留、多行主题替换、重复键拒绝、首次外观基线、重复换肤、换肤后其他设置合并恢复、CRLF 字节恢复和权限校验。`Tests/Fixtures/StrictConfig/config.toml` 可用于当前 Codex CLI 的严格配置解析：
 
 ```bash
 CODEX_HOME="$PWD/Tests/Fixtures/StrictConfig" \

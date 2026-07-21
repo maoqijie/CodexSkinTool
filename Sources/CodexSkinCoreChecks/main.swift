@@ -97,6 +97,38 @@ func checkEditor() throws {
     let appearanceIndex = try require(nestedResult.range(of: "appearanceTheme ="), "嵌套段落场景未插入主题键")
     let childIndex = try require(nestedResult.range(of: "[desktop.workspace]"), "嵌套段落丢失")
     try expect(appearanceIndex.lowerBound < childIndex.lowerBound, "主题键错误插入 desktop 子表")
+
+    let sectionTheme = """
+    [desktop]
+    appearanceTheme = "dark"
+
+    [desktop.appearanceDarkChromeTheme]
+    accent = "#111111"
+    ink = "#EEEEEE"
+    surface = "#222222"
+
+    [desktop.appearanceDarkChromeTheme.fonts]
+    code = "Mono"
+
+    [features]
+    memories = true
+    """
+    let sectionResult = try edit(sectionTheme, themeID: "tokyo-night")
+    try expect(!sectionResult.contains("[desktop.appearanceDarkChromeTheme]"), "未移除已有 Chrome 子表")
+    try expect(occurrences(of: "appearanceDarkChromeTheme =", in: sectionResult) == 1, "Chrome 子表迁移后键数量错误")
+    try expect(sectionResult.contains("[features]\nmemories = true"), "Chrome 子表迁移误改后续配置")
+
+    let editor = TOMLDocumentEditor()
+    let sectionData = Data(sectionTheme.utf8)
+    let baseline = try editor.appearanceBaseline(from: sectionData)
+    let appliedSection = try editor.applying(
+        theme: require(ThemeCatalog.theme(id: "tokyo-night"), "缺少 Tokyo Night"),
+        to: sectionData
+    )
+    let restoredSection = try editor.restoringAppearance(in: appliedSection, baseline: baseline)
+    let restoredSectionText = String(decoding: restoredSection, as: UTF8.self)
+    try expect(restoredSectionText.contains("[desktop.appearanceDarkChromeTheme]"), "未恢复原始 Chrome 子表")
+    try expect(restoredSectionText.contains("[features]\nmemories = true"), "恢复 Chrome 子表误改后续配置")
 }
 
 func checkCatalog() throws {
@@ -164,13 +196,15 @@ func checkStore() throws {
     try expect(preserved.contains("model = \"gpt-5\""), "恢复删除了换肤后新增的配置")
     try expect(!preserved.contains("appearanceLightChromeTheme"), "新配置恢复后仍残留工具主题")
 
-    let original = Data("# original\n[desktop]\nlocaleOverride = \"zh-CN\"\n".utf8)
+    let original = Data("# original\nprovider_secret = \"must-not-be-copied\"\n[desktop]\nlocaleOverride = \"zh-CN\"\n".utf8)
     let repeated = try Fixture(original: original)
     defer { repeated.cleanup() }
     try repeated.store.apply(theme: repeated.theme, needsRestart: false)
     let second = try require(ThemeCatalog.theme(id: "dracula"), "缺少 Dracula 主题")
     try repeated.store.apply(theme: second, needsRestart: true)
-    try expect(try Data(contentsOf: repeated.store.backupURL) == original, "重复应用覆盖了原始备份")
+    try expect(!FileManager.default.fileExists(atPath: repeated.store.backupURL.path), "不应备份整份 Codex 配置")
+    let stateData = try Data(contentsOf: repeated.store.stateURL)
+    try expect(!String(decoding: stateData, as: UTF8.self).contains("must-not-be-copied"), "状态文件复制了非外观配置")
     var concurrent = try String(contentsOf: repeated.configURL, encoding: .utf8)
     concurrent += "\nnotifications = true\n"
     try Data(concurrent.utf8).write(to: repeated.configURL)
@@ -183,11 +217,16 @@ func checkStore() throws {
     let recovery = try Fixture(original: crlf)
     defer { recovery.cleanup() }
     try recovery.store.apply(theme: recovery.theme, needsRestart: false)
+    let appliedCRLF = try String(contentsOf: recovery.configURL, encoding: .utf8)
+    try expect(occurrences(of: "[desktop]", in: appliedCRLF) == 1, "CRLF 配置重复创建 desktop 段")
     try expect(try recovery.store.restore(needsRestart: true), "恢复未执行")
     let recoveredBytes = try Data(contentsOf: recovery.configURL)
-    try expect(recoveredBytes == crlf, "未按原始字节恢复：\(String(decoding: recoveredBytes, as: UTF8.self).debugDescription)")
+    try expect(
+        recoveredBytes == crlf,
+        "未按原始字节恢复：themed=\(appliedCRLF.debugDescription) restored=\(String(decoding: recoveredBytes, as: UTF8.self).debugDescription)"
+    )
     try expect(fileMode(recovery.configURL) == 0o600, "配置权限不是 0600")
-    try expect(fileMode(recovery.store.backupURL) == 0o600, "备份权限不是 0600")
+    try expect(fileMode(recovery.store.stateURL) == 0o600, "状态权限不是 0600")
 
     let noBaseline = try Fixture()
     defer { noBaseline.cleanup() }

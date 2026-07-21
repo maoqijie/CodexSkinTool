@@ -1,15 +1,82 @@
 import Foundation
 
 public struct TOMLDocumentEditor: Sendable {
-    private static let managedKeys = [
+    static let managedKeys = [
         "appearanceTheme",
         "appearanceLightCodeThemeId",
         "appearanceDarkCodeThemeId",
         "appearanceLightChromeTheme",
         "appearanceDarkChromeTheme",
     ]
+    static let chromeKeys = ["appearanceLightChromeTheme", "appearanceDarkChromeTheme"]
 
     public init() {}
+
+    public func appearanceBaseline(from data: Data) throws -> AppearanceBaseline {
+        guard let source = String(data: data, encoding: .utf8) else {
+            throw ThemeServiceError.invalidConfiguration("配置文件不是有效的 UTF-8 文本")
+        }
+        var values: [String: String] = [:]
+        var chromeSections: [String: String] = [:]
+        for key in Self.managedKeys {
+            if let range = try uniqueValue(for: key, inSection: "desktop", source: source) {
+                values[key] = String(source[range])
+            }
+        }
+        for key in Self.chromeKeys {
+            if let range = try sectionGroupRange(named: "desktop.\(key)", in: source) {
+                guard values[key] == nil else {
+                    throw ThemeServiceError.invalidConfiguration("\(key) 同时使用内联值和子表")
+                }
+                chromeSections[key] = String(source[range])
+            }
+        }
+        return AppearanceBaseline(values: values, chromeSections: chromeSections)
+    }
+
+    public func restoringAppearance(
+        in currentData: Data,
+        baseline: AppearanceBaseline
+    ) throws -> Data {
+        guard let current = String(data: currentData, encoding: .utf8) else {
+            throw ThemeServiceError.invalidConfiguration("配置文件不是有效的 UTF-8 文本")
+        }
+        let newline = current.contains("\r\n") ? "\r\n" : "\n"
+        var result = current
+
+        for key in Self.managedKeys {
+            if Self.chromeKeys.contains(key) {
+                result = try removingSectionGroup(named: "desktop.\(key)", from: result)
+            }
+            let currentValue = try uniqueValue(for: key, inSection: "desktop", source: result)
+            if let baselineValue = baseline.values[key] {
+                if let currentValue {
+                    result.replaceSubrange(currentValue, with: baselineValue)
+                } else {
+                    result = insert(
+                        key: key,
+                        value: baselineValue,
+                        inSection: "desktop",
+                        source: result,
+                        newline: newline
+                    )
+                }
+            } else if currentValue != nil,
+                      let assignment = try uniqueAssignment(for: key, inSection: "desktop", source: result) {
+                result.removeSubrange(assignment)
+            }
+        }
+        for key in Self.chromeKeys {
+            if let section = baseline.chromeSections[key] {
+                result = appendingSectionGroup(section, to: result, newline: newline)
+            }
+        }
+
+        guard let output = result.data(using: .utf8) else {
+            throw ThemeServiceError.invalidConfiguration("无法编码恢复后的配置")
+        }
+        return output
+    }
 
     public func applying(theme: Theme, to data: Data) throws -> Data {
         guard let source = String(data: data, encoding: .utf8) else {
@@ -20,6 +87,15 @@ public struct TOMLDocumentEditor: Sendable {
         var result = source
 
         for (key, value) in values {
+            if Self.chromeKeys.contains(key) {
+                let sectionName = "desktop.\(key)"
+                let sectionExists = try sectionGroupRange(named: sectionName, in: result) != nil
+                if sectionExists,
+                   try uniqueValue(for: key, inSection: "desktop", source: result) != nil {
+                    throw ThemeServiceError.invalidConfiguration("\(key) 同时使用内联值和子表")
+                }
+                result = try removingSectionGroup(named: sectionName, from: result)
+            }
             if let range = try uniqueValue(for: key, inSection: "desktop", source: result) {
                 result.replaceSubrange(range, with: value)
             } else {
@@ -33,36 +109,14 @@ public struct TOMLDocumentEditor: Sendable {
     }
 
     public func restoringAppearance(in currentData: Data, from baselineData: Data) throws -> Data {
-        guard let current = String(data: currentData, encoding: .utf8),
-              let baseline = String(data: baselineData, encoding: .utf8) else {
+        guard String(data: currentData, encoding: .utf8) != nil,
+              String(data: baselineData, encoding: .utf8) != nil else {
             throw ThemeServiceError.invalidConfiguration("配置文件不是有效的 UTF-8 文本")
         }
-        let newline = current.contains("\r\n") ? "\r\n" : "\n"
         for theme in ThemeCatalog.builtIn where try applying(theme: theme, to: baselineData) == currentData {
             return baselineData
         }
-        var result = current
-
-        for key in Self.managedKeys {
-            let baselineValue = try uniqueValue(for: key, inSection: "desktop", source: baseline)
-            let currentValue = try uniqueValue(for: key, inSection: "desktop", source: result)
-            if let baselineValue {
-                let value = String(baseline[baselineValue])
-                if let currentValue {
-                    result.replaceSubrange(currentValue, with: value)
-                } else {
-                    result = insert(key: key, value: value, inSection: "desktop", source: result, newline: newline)
-                }
-            } else if currentValue != nil,
-                      let assignment = try uniqueAssignment(for: key, inSection: "desktop", source: result) {
-                result.removeSubrange(assignment)
-            }
-        }
-
-        guard let output = result.data(using: .utf8) else {
-            throw ThemeServiceError.invalidConfiguration("无法编码恢复后的配置")
-        }
-        return output
+        return try restoringAppearance(in: currentData, baseline: appearanceBaseline(from: baselineData))
     }
 
     public func isEffectivelyEmpty(_ data: Data) -> Bool {
@@ -105,24 +159,6 @@ public struct TOMLDocumentEditor: Sendable {
             .replacingOccurrences(of: "\n", with: "\\n") + "\""
     }
 
-    private func valueRange(for key: String, inSection section: String, source: String) -> Range<String.Index>? {
-        guard let sectionRange = sectionBodyRange(named: section, in: source) else { return nil }
-        var cursor = sectionRange.lowerBound
-        while cursor < sectionRange.upperBound {
-            let lineEnd = source[cursor..<sectionRange.upperBound].firstIndex(of: "\n") ?? sectionRange.upperBound
-            let contentEnd = lineEnd > cursor && source[source.index(before: lineEnd)] == "\r"
-                ? source.index(before: lineEnd) : lineEnd
-            let line = source[cursor..<contentEnd]
-            if let equals = assignmentEquals(key: key, in: line, source: source) {
-                let rawStart = source.index(after: equals)
-                let valueStart = skipHorizontalWhitespace(from: rawStart, limit: sectionRange.upperBound, source: source)
-                return scannedValueRange(from: valueStart, limit: sectionRange.upperBound, source: source)
-            }
-            cursor = lineEnd < sectionRange.upperBound ? source.index(after: lineEnd) : sectionRange.upperBound
-        }
-        return nil
-    }
-
     private func uniqueValue(
         for key: String,
         inSection section: String,
@@ -144,7 +180,8 @@ public struct TOMLDocumentEditor: Sendable {
         var matches: [Range<String.Index>] = []
         var cursor = sectionRange.lowerBound
         while cursor < sectionRange.upperBound {
-            let lineEnd = source[cursor..<sectionRange.upperBound].firstIndex(of: "\n") ?? sectionRange.upperBound
+            let lineEnd = source[cursor..<sectionRange.upperBound].firstIndex(where: \.isNewline)
+                ?? sectionRange.upperBound
             let contentEnd = lineEnd > cursor && source[source.index(before: lineEnd)] == "\r"
                 ? source.index(before: lineEnd) : lineEnd
             if let equals = assignmentEquals(key: key, in: source[cursor..<contentEnd], source: source) {
@@ -154,7 +191,7 @@ public struct TOMLDocumentEditor: Sendable {
                     source: source
                 )
                 let value = scannedValueRange(from: valueStart, limit: sectionRange.upperBound, source: source)
-                let endOfValueLine = source[value.upperBound..<sectionRange.upperBound].firstIndex(of: "\n")
+                let endOfValueLine = source[value.upperBound..<sectionRange.upperBound].firstIndex(where: \.isNewline)
                     ?? sectionRange.upperBound
                 let assignmentEnd = endOfValueLine < sectionRange.upperBound
                     ? source.index(after: endOfValueLine) : endOfValueLine
@@ -177,7 +214,8 @@ public struct TOMLDocumentEditor: Sendable {
         var matches: [Range<String.Index>] = []
         var cursor = sectionRange.lowerBound
         while cursor < sectionRange.upperBound {
-            let lineEnd = source[cursor..<sectionRange.upperBound].firstIndex(of: "\n") ?? sectionRange.upperBound
+            let lineEnd = source[cursor..<sectionRange.upperBound].firstIndex(where: \.isNewline)
+                ?? sectionRange.upperBound
             let contentEnd = lineEnd > cursor && source[source.index(before: lineEnd)] == "\r"
                 ? source.index(before: lineEnd) : lineEnd
             if let equals = assignmentEquals(key: key, in: source[cursor..<contentEnd], source: source) {
@@ -246,7 +284,7 @@ public struct TOMLDocumentEditor: Sendable {
                     lastValueEnd = next
                 } else if character == "#" && depth == 0 {
                     break
-                } else if character == "\n" && depth == 0 {
+                } else if character.isNewline && depth == 0 {
                     break
                 } else if character != " " && character != "\t" && character != "\r" && character != "\n" {
                     lastValueEnd = next
@@ -260,11 +298,11 @@ public struct TOMLDocumentEditor: Sendable {
     private func insert(key: String, value: String, inSection section: String, source: String, newline: String) -> String {
         let assignment = "\(key) = \(value)\(newline)"
         guard let location = insertionLocation(forSection: section, in: source) else {
-            let separator = source.isEmpty || source.hasSuffix("\n") ? "" : newline
+            let separator = source.isEmpty || source.last?.isNewline == true ? "" : newline
             return source + separator + "[\(section)]\(newline)" + assignment
         }
         var result = source
-        let prefix = location == source.endIndex && !source.hasSuffix("\n") ? newline : ""
+        let prefix = location == source.endIndex && source.last?.isNewline != true ? newline : ""
         result.insert(contentsOf: prefix + assignment, at: location)
         return result
     }
@@ -274,7 +312,7 @@ public struct TOMLDocumentEditor: Sendable {
         var firstChildSection: String.Index?
         var inTargetSection = false
         while cursor < source.endIndex {
-            let lineEnd = source[cursor...].firstIndex(of: "\n") ?? source.endIndex
+            let lineEnd = source[cursor...].firstIndex(where: \.isNewline) ?? source.endIndex
             var contentEnd = lineEnd
             if contentEnd > cursor && source[source.index(before: contentEnd)] == "\r" {
                 contentEnd = source.index(before: contentEnd)
@@ -300,7 +338,7 @@ public struct TOMLDocumentEditor: Sendable {
         var cursor = source.startIndex
         var bodyStart: String.Index?
         while cursor < source.endIndex {
-            let lineEnd = source[cursor...].firstIndex(of: "\n") ?? source.endIndex
+            let lineEnd = source[cursor...].firstIndex(where: \.isNewline) ?? source.endIndex
             var contentEnd = lineEnd
             if contentEnd > cursor && source[source.index(before: contentEnd)] == "\r" {
                 contentEnd = source.index(before: contentEnd)
@@ -317,7 +355,7 @@ public struct TOMLDocumentEditor: Sendable {
         return bodyStart.map { $0..<source.endIndex }
     }
 
-    private func tableHeader(in line: String) -> String? {
+    func tableHeader(in line: String) -> String? {
         guard line.hasPrefix("["), !line.hasPrefix("[["), let close = line.firstIndex(of: "]") else {
             return nil
         }

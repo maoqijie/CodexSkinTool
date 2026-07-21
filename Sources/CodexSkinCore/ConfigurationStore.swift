@@ -22,19 +22,22 @@ public struct ConfigurationPaths: Sendable {
 public struct PersistedThemeState: Codable, Equatable, Sendable {
     public let version: Int
     public let originalConfigExisted: Bool
+    public var originalAppearance: AppearanceBaseline?
     public var selectedThemeID: String?
     public var needsRestart: Bool
     public var appliedAt: Date?
 
     public init(
-        version: Int = 1,
+        version: Int = 2,
         originalConfigExisted: Bool,
+        originalAppearance: AppearanceBaseline? = nil,
         selectedThemeID: String?,
         needsRestart: Bool,
         appliedAt: Date?
     ) {
         self.version = version
         self.originalConfigExisted = originalConfigExisted
+        self.originalAppearance = originalAppearance
         self.selectedThemeID = selectedThemeID
         self.needsRestart = needsRestart
         self.appliedAt = appliedAt
@@ -87,14 +90,13 @@ public struct ConfigurationStore {
         }
         var state = try readState()
         if state == nil {
-            let existingBackup = fileManager.fileExists(atPath: backupURL.path)
-            let existed = existingBackup || fileManager.fileExists(atPath: paths.configURL.path)
-            if existed && !existingBackup {
-                let original = try readData(at: paths.configURL, context: "读取原始 Codex 配置")
-                try atomicWrite(original, to: backupURL)
-            }
+            let existed = fileManager.fileExists(atPath: paths.configURL.path)
+            let original = existed
+                ? try readData(at: paths.configURL, context: "读取原始 Codex 配置")
+                : Data()
             state = PersistedThemeState(
                 originalConfigExisted: existed,
+                originalAppearance: try editor.appearanceBaseline(from: original),
                 selectedThemeID: nil,
                 needsRestart: false,
                 appliedAt: nil
@@ -119,20 +121,20 @@ public struct ConfigurationStore {
 
     public func restore(needsRestart: Bool) throws -> Bool {
         guard var state = try readState() else { return false }
-        if state.originalConfigExisted {
-            guard fileManager.fileExists(atPath: backupURL.path) else {
-                throw ThemeServiceError.backupMissing
-            }
-            guard fileManager.fileExists(atPath: paths.configURL.path) else {
-                throw ThemeServiceError.invalidState("当前 Codex 配置缺失，已停止恢复以避免覆盖外部变更")
-            }
+        if fileManager.fileExists(atPath: paths.configURL.path) {
             let current = try readData(at: paths.configURL, context: "读取当前 Codex 配置")
-            let original = try readData(at: backupURL, context: "读取原始配置备份")
-            let restored = try editor.restoringAppearance(in: current, from: original)
-            try atomicWrite(restored, to: paths.configURL)
-        } else if fileManager.fileExists(atPath: paths.configURL.path) {
-            let current = try readData(at: paths.configURL, context: "读取当前 Codex 配置")
-            let restored = try editor.restoringAppearance(in: current, from: Data())
+            let restored: Data
+            if let originalAppearance = state.originalAppearance {
+                restored = try editor.restoringAppearance(in: current, baseline: originalAppearance)
+            } else if !state.originalConfigExisted {
+                restored = try editor.restoringAppearance(in: current, baseline: AppearanceBaseline())
+            } else {
+                guard fileManager.fileExists(atPath: backupURL.path) else {
+                    throw ThemeServiceError.backupMissing
+                }
+                let original = try readData(at: backupURL, context: "读取原始配置备份")
+                restored = try editor.restoringAppearance(in: current, from: original)
+            }
             if editor.isEffectivelyEmpty(restored) {
                 do {
                     try fileManager.removeItem(at: paths.configURL)
@@ -142,12 +144,17 @@ public struct ConfigurationStore {
             } else {
                 try atomicWrite(restored, to: paths.configURL)
             }
+        } else if state.originalConfigExisted {
+            throw ThemeServiceError.invalidState("当前 Codex 配置缺失，已停止恢复以避免覆盖外部变更")
         }
 
         state.selectedThemeID = nil
         state.needsRestart = needsRestart
         state.appliedAt = nil
         try writeState(state)
+        if state.originalAppearance != nil, fileManager.fileExists(atPath: backupURL.path) {
+            try? fileManager.removeItem(at: backupURL)
+        }
         return true
     }
 
