@@ -61,73 +61,11 @@ private struct Options {
     }
 }
 
-private enum InjectorError: LocalizedError {
-    case invalidArgument(String)
-    case invalidEndpoint
-    case noCodexTarget
-    case protocolFailure(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidArgument(let message): message
-        case .invalidEndpoint: "CDP 端点不是受信任的本机 Codex 页面"
-        case .noCodexTarget: "未找到 Codex 渲染页面"
-        case .protocolFailure(let message): "CDP 协议错误：\(message)"
-        }
-    }
-}
-
 private struct CDPTarget: Decodable {
     let id: String
     let type: String
     let url: String
     let webSocketDebuggerUrl: String
-}
-
-private actor CDPSession {
-    private let task: URLSessionWebSocketTask
-    private var nextID = 1
-
-    init(url: URL) {
-        task = URLSession(configuration: .ephemeral).webSocketTask(with: url)
-        task.resume()
-    }
-
-    func evaluate(_ expression: String) async throws -> Any? {
-        let id = nextID
-        nextID += 1
-        let payload: [String: Any] = [
-            "id": id,
-            "method": "Runtime.evaluate",
-            "params": ["expression": expression, "awaitPromise": true, "returnByValue": true],
-        ]
-        let data = try JSONSerialization.data(withJSONObject: payload)
-        try await task.send(.data(data))
-        while true {
-            let message = try await task.receive()
-            let responseData: Data
-            switch message {
-            case .data(let data): responseData = data
-            case .string(let string): responseData = Data(string.utf8)
-            @unknown default: continue
-            }
-            guard let response = try JSONSerialization.jsonObject(with: responseData) as? [String: Any],
-                  response["id"] as? Int == id else { continue }
-            if let error = response["error"] as? [String: Any] {
-                throw InjectorError.protocolFailure(error["message"] as? String ?? "未知响应")
-            }
-            guard let result = response["result"] as? [String: Any],
-                  let remote = result["result"] as? [String: Any] else { return nil }
-            if result["exceptionDetails"] != nil {
-                throw InjectorError.protocolFailure("渲染器拒绝执行")
-            }
-            return remote["value"]
-        }
-    }
-
-    func close() {
-        task.cancel(with: .goingAway, reason: nil)
-    }
 }
 
 private struct Injector {
@@ -142,31 +80,77 @@ private struct Injector {
         let dataURL = "data:\(mime);base64,\(image.base64EncodedString())"
         let expression = try injectionExpression(dataURL: dataURL)
         var markedReady = false
+        var loggedTargetDiscovery = false
+        var loggedCodexTarget = false
+        var loggedInstallation = false
+        var lastError: String?
+
+        log("启动，等待 Codex 渲染目标，端口 \(options.port)")
 
         while !Task.isCancelled {
             guard leaseIsValid() else { return }
             do {
                 let targets = try await listTargets()
+                if !loggedTargetDiscovery {
+                    log("已发现 \(targets.count) 个候选渲染目标")
+                    loggedTargetDiscovery = true
+                }
                 for target in targets {
-                    let socketURL = try validatedSocketURL(target)
-                    let cdp = CDPSession(url: socketURL)
-                    defer { Task { await cdp.close() } }
-                    let probe = try await cdp.evaluate(probeExpression) as? [String: Any]
-                    guard probe?["codex"] as? Bool == true else { continue }
-                    let installed = try await cdp.evaluate(expression) as? Bool
-                    guard installed == true else { continue }
-                    let verified = try await cdp.evaluate(try verificationExpression()) as? Bool
-                    guard verified == true else { continue }
-                    if !markedReady {
-                        try Data("{\"status\":\"ready\"}\n".utf8).write(to: options.readyURL, options: .atomic)
-                        guard chmod(options.readyURL.path, S_IRUSR | S_IWUSR) == 0 else {
-                            throw InjectorError.protocolFailure("无法限制验证文件权限")
+                    do {
+                        let socketURL = try validatedSocketURL(target)
+                        let cdp = try await CDPSession(url: socketURL)
+                        do {
+                            let probe = try await cdp.evaluate(probeExpression) as? [String: Any]
+                            guard probe?["codex"] as? Bool == true else {
+                                await cdp.close()
+                                continue
+                            }
+                            if !loggedCodexTarget {
+                                log("WebSocket 已连接并确认 Codex 页面")
+                                loggedCodexTarget = true
+                            }
+                            let installed = try await cdp.evaluate(expression) as? Bool
+                            guard installed == true else {
+                                await cdp.close()
+                                continue
+                            }
+                            if !loggedInstallation {
+                                log("图片层表达式执行成功")
+                                loggedInstallation = true
+                            }
+                            let verified = try await cdp.evaluate(try verificationExpression()) as? Bool
+                            guard verified == true else {
+                                await cdp.close()
+                                continue
+                            }
+                            if !markedReady {
+                                try Data("{\"status\":\"ready\"}\n".utf8).write(to: options.readyURL, options: .atomic)
+                                guard chmod(options.readyURL.path, S_IRUSR | S_IWUSR) == 0 else {
+                                    throw InjectorError.protocolFailure("无法限制验证文件权限")
+                                }
+                                log("图片层效果验证通过")
+                                markedReady = true
+                            }
+                            lastError = nil
+                        } catch {
+                            await cdp.close()
+                            throw error
                         }
-                        markedReady = true
+                        await cdp.close()
+                    } catch {
+                        let message = error.localizedDescription
+                        if message != lastError {
+                            log("目标 \(target.id) 处理失败：\(message)")
+                            lastError = message
+                        }
                     }
                 }
             } catch {
-                fputs("CodexSkinInjector: \(error.localizedDescription)\n", stderr)
+                let message = error.localizedDescription
+                if message != lastError {
+                    log("目标发现失败：\(message)")
+                    lastError = message
+                }
             }
             try await Task.sleep(for: .seconds(markedReady ? 2 : 0.35))
         }
@@ -242,6 +226,7 @@ private struct Injector {
             "brightness": options.brightness,
             "focusX": options.focusX,
             "focusY": options.focusY,
+            "session": options.leaseToken,
         ])
         let json = String(decoding: data, as: UTF8.self)
         return """
@@ -249,7 +234,8 @@ private struct Injector {
           const cfg = \(json);
           const layer = document.getElementById('codex-skin-tool-background');
           const style = document.getElementById('codex-skin-tool-style');
-          if (!layer || !style || document.documentElement.dataset.codexSkinTool !== 'background-v2') return false;
+          if (!layer || !style || style.dataset.session !== cfg.session ||
+              document.documentElement.dataset.codexSkinTool !== 'background-v2') return false;
           const computed = getComputedStyle(layer);
           return computed.backgroundImage !== 'none' && computed.pointerEvents === 'none' &&
             Math.abs(Number(computed.opacity) - cfg.opacity) < 0.001 &&
@@ -268,6 +254,7 @@ private struct Injector {
             "brightness": options.brightness,
             "focusX": options.focusX,
             "focusY": options.focusY,
+            "session": options.leaseToken,
             "surface": options.surface,
             "ink": options.ink,
         ]
@@ -276,12 +263,15 @@ private struct Injector {
         return """
         (() => {
           const cfg = \(json);
-          if (document.getElementById('codex-skin-tool-style') &&
-              document.getElementById('codex-skin-tool-background')) return true;
+          const currentStyle = document.getElementById('codex-skin-tool-style');
+          if (currentStyle?.dataset.session === cfg.session &&
+              document.getElementById('codex-skin-tool-background') &&
+              document.documentElement.dataset.codexSkinTool === 'background-v2') return true;
           document.getElementById('codex-skin-tool-style')?.remove();
           document.getElementById('codex-skin-tool-background')?.remove();
           const style = document.createElement('style');
           style.id = 'codex-skin-tool-style';
+          style.dataset.session = cfg.session;
           style.textContent = `
             #codex-skin-tool-background {
               position: fixed; inset: 0; z-index: 0; pointer-events: none;
@@ -313,6 +303,10 @@ private struct Injector {
         case "webp": "image/webp"
         default: "image/png"
         }
+    }
+
+    private func log(_ message: String) {
+        fputs("CodexSkinInjector: \(message)\n", stderr)
     }
 }
 

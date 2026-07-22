@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-
 public struct BackgroundSkinStatus: Codable, Equatable, Sendable {
     public let active: Bool
     public let port: Int?
@@ -9,17 +8,13 @@ public struct BackgroundSkinStatus: Codable, Equatable, Sendable {
         self.active = active
         self.port = port
     }
-
     public static let inactive = BackgroundSkinStatus(active: false, port: nil)
 }
-
 private enum SessionPhase: String, Codable { case starting, active }
-
 private struct ProcessIdentity: Codable {
     let pid: Int32
     let startedAt: String
 }
-
 private struct BackgroundSessionState: Codable {
     let version: Int
     var phase: SessionPhase
@@ -30,7 +25,6 @@ private struct BackgroundSessionState: Codable {
     var codex: ProcessIdentity?
     let createdAt: Date
 }
-
 public struct BackgroundSkinSession {
     private let supportDirectoryURL: URL
     private let fileManager: FileManager
@@ -42,7 +36,6 @@ public struct BackgroundSkinSession {
         self.supportDirectoryURL = supportDirectoryURL
         self.fileManager = fileManager
     }
-
     private var stateURL: URL { supportDirectoryURL.appendingPathComponent("background-session.json") }
     private var readyURL: URL { supportDirectoryURL.appendingPathComponent("background-ready.json") }
     private var logURL: URL { supportDirectoryURL.appendingPathComponent("background-injector.log") }
@@ -77,29 +70,35 @@ public struct BackgroundSkinSession {
             .backgroundURL(named: settings.imageName) else {
             throw ThemeServiceError.invalidBackground("已选择的图片不存在，请重新选择")
         }
-        _ = try await recoverAndStop(appService: appService)
+        let reusableListener = try prepareForStart(appService: appService)
         try fileManager.createDirectory(at: supportDirectoryURL, withIntermediateDirectories: true)
         try? fileManager.removeItem(at: readyURL)
-        let port = try availablePort()
         let helperURL = try resolveHelperURL()
         let sessionID = UUID().uuidString
-        try writeState(BackgroundSessionState(
-            version: 2,
-            phase: .starting,
-            port: port,
-            helperPath: helperURL.resolvingSymlinksInPath().path,
-            sessionID: sessionID,
-            helper: nil,
-            codex: nil,
-            createdAt: Date()
-        ))
 
         var helperProcess: Process?
         do {
             try appService.validateOfficialInstallation()
-            try await appService.terminate(timeout: 10)
-            try appService.open(remoteDebuggingPort: port)
-            let codex = try await waitForCodexListener(port: port, appService: appService, timeout: 15)
+            let existingListener = reusableListener ?? managedDebugListener(appService: appService)
+            let port = try existingListener?.port ?? availablePort()
+            try writeState(BackgroundSessionState(
+                version: 2,
+                phase: .starting,
+                port: port,
+                helperPath: helperURL.resolvingSymlinksInPath().path,
+                sessionID: sessionID,
+                helper: nil,
+                codex: existingListener?.identity,
+                createdAt: Date()
+            ))
+            let codex: ProcessIdentity
+            if let existingListener {
+                codex = existingListener.identity
+            } else {
+                try await appService.terminate(timeout: 10)
+                try appService.open(remoteDebuggingPort: port)
+                codex = try await waitForCodexListener(port: port, appService: appService, timeout: 15)
+            }
 
             let process = try launchHelper(
                 at: helperURL,
@@ -185,6 +184,23 @@ public struct BackgroundSkinSession {
         return hasRecordedListener || hasUnrecordedListener
     }
 
+    @MainActor
+    private func prepareForStart(appService: CodexAppService) throws -> (port: Int, identity: ProcessIdentity)? {
+        let listener = managedDebugListener(appService: appService)
+        guard let state = try? readState() else { clearState(); return listener }
+        if let helper = state.helper, kill(helper.pid, 0) == 0 {
+            guard processMatches(helper, path: state.helperPath, port: state.port) else {
+                throw ThemeServiceError.backgroundSession("注入器状态与进程身份不一致，已拒绝结束未知进程")
+            }
+            _ = kill(helper.pid, SIGTERM)
+            let deadline = Date().addingTimeInterval(5)
+            while processMatches(helper, path: state.helperPath, port: state.port), Date() < deadline { usleep(100_000) }
+            if processMatches(helper, path: state.helperPath, port: state.port) { _ = kill(helper.pid, SIGKILL) }
+        }
+        clearState()
+        return listener
+    }
+
     private func launchHelper(
         at helperURL: URL,
         port: Int,
@@ -244,9 +260,18 @@ public struct BackgroundSkinSession {
     }
 
     @MainActor
-    private func hasManagedDebugListener(appService: CodexAppService) -> Bool {
+    private func managedDebugListener(
+        appService: CodexAppService
+    ) -> (port: Int, identity: ProcessIdentity)? {
         let appPIDs = appService.runningProcessIdentifiers()
-        return (9_341...9_380).contains { !listenerPIDs(port: $0).isDisjoint(with: appPIDs) }
+        for port in 9_341...9_380 {
+            for pid in listenerPIDs(port: port).intersection(appPIDs) {
+                if let startedAt = processStartTime(pid) {
+                    return (port, ProcessIdentity(pid: pid, startedAt: startedAt))
+                }
+            }
+        }
+        return nil
     }
 
     private func listenerPIDs(port: Int) -> Set<Int32> {
@@ -361,6 +386,10 @@ public struct BackgroundSkinSession {
             try? fileManager.removeItem(at: temporary)
             throw ThemeServiceError.fileOperation("无法建立图片注入器租约")
         }
+    }
+
+    @MainActor private func hasManagedDebugListener(appService: CodexAppService) -> Bool {
+        managedDebugListener(appService: appService) != nil
     }
 
     private func clearState() {
