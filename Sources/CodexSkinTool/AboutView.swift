@@ -6,8 +6,6 @@ struct AboutView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PageHeader(title: "关于", subtitle: "版本与更新信息")
-            Divider()
             VStack(spacing: 24) {
                 identity
                 Divider().frame(maxWidth: 460)

@@ -12,14 +12,8 @@ struct CustomThemeEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Text("自定义主题")
-                    .font(.system(size: 14, weight: .semibold))
-                Spacer()
-                Text("实验图片模式")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
-            }
+            Text("自定义主题")
+                .font(.system(size: 14, weight: .semibold))
 
             HStack(spacing: 16) {
                 field("名称") {
@@ -117,10 +111,6 @@ struct CustomThemeEditor: View {
                     }
                 }
             }
-
-            Label("图片皮肤通过仅限本机的临时渲染会话工作；Codex 更新后可能需要重新应用。", systemImage: "exclamationmark.shield")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
         }
         .padding(16)
         .background(AppPalette.panel)

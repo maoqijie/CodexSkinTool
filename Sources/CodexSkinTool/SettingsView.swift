@@ -5,13 +5,6 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PageHeader(
-                title: "设置",
-                subtitle: "自定义配色、代码主题与图片背景"
-            ) {
-                ThemeSwatches(theme: model.customDraft.theme, size: 16)
-            }
-            Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     ThemePreview(

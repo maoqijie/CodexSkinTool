@@ -7,7 +7,11 @@ struct ThemeActionBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            statusMessage
+            if let message = model.message {
+                Label(message, systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AppPalette.success)
+            }
             Spacer()
             if model.status.canRestore {
                 Button("恢复原始外观", systemImage: "arrow.uturn.backward") { model.restore() }
@@ -35,16 +39,4 @@ struct ThemeActionBar: View {
         .background(.bar)
     }
 
-    @ViewBuilder
-    private var statusMessage: some View {
-        if let message = model.message {
-            Label(message, systemImage: "checkmark.circle.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(AppPalette.success)
-        } else {
-            Text("保存外观基线后原子写入；不会修改 Codex 安装包。")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-    }
 }

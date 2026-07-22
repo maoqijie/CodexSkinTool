@@ -9,10 +9,6 @@ struct ThemeGalleryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            PageHeader(title: "换肤", subtitle: "选择主题并预览 Codex 界面") {
-                if let theme = model.selectedTheme { ThemeSwatches(theme: theme, size: 16) }
-            }
-            Divider()
             ScrollView {
                 if let selected = model.selectedItem {
                     gallery(selected: selected)
@@ -46,11 +42,7 @@ struct ThemeGalleryView: View {
                 themeSection("我的主题", items: customs)
             }
 
-            HStack {
-                Text("界面预览").font(.system(size: 13, weight: .semibold))
-                Spacer()
-                Text(selected.theme.name).font(.system(size: 10)).foregroundStyle(.secondary)
-            }
+            Text("界面预览").font(.system(size: 13, weight: .semibold))
             ThemePreview(
                 theme: selected.theme,
                 backgroundURL: backgroundURL(for: selected),
