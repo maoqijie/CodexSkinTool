@@ -5,8 +5,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(/usr/bin/tr -d '\r\n' < "$ROOT/VERSION")"
 OUTPUT="${1:-$ROOT/output/CodexSkinTool.app}"
 
+printf 'INFO: 构建 legacy macOS Swift 应用；当前 Tauri 应用请使用 npm run tauri -- build\n'
 if [ "$(/usr/bin/uname -s)" != "Darwin" ]; then
-    printf 'CodexSkinTool can only be bundled on macOS.\n' >&2
+    printf 'Legacy CodexSkinTool can only be bundled on macOS.\n' >&2
     exit 1
 fi
 
