@@ -202,7 +202,9 @@ public struct BackgroundSkinSession {
         process.arguments = [
             "--watch", "--port", String(port), "--image", imageURL.path,
             "--opacity", String(settings.opacity), "--blur", String(settings.blur),
-            "--fit", settings.fit.rawValue, "--surface", theme.chromeTheme.surface,
+            "--fit", settings.fit.rawValue, "--brightness", String(settings.brightness),
+            "--focus-x", String(settings.focusX), "--focus-y", String(settings.focusY),
+            "--surface", theme.chromeTheme.surface,
             "--ink", theme.chromeTheme.ink, "--ready-file", readyURL.path,
             "--lease-file", leaseURL.path, "--lease-token", sessionID,
         ]

@@ -3,6 +3,7 @@ import SwiftUI
 struct ThemeActionBar: View {
     @EnvironmentObject private var model: AppModel
     let applyTitle: String
+    var selectionAvailable = true
     let apply: () -> Void
 
     var body: some View {
@@ -31,7 +32,7 @@ struct ThemeActionBar: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(AppPalette.accent)
-            .disabled(model.isBusy || !model.status.app.isInstalled || model.selectedItem == nil)
+            .disabled(model.isBusy || !model.status.app.isInstalled || model.selectedItem == nil || !selectionAvailable)
             .keyboardShortcut(.return, modifiers: [.command])
         }
         .padding(.horizontal, 20)

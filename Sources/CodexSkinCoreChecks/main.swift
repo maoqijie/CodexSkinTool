@@ -174,6 +174,11 @@ func checkAppVersion() throws {
 }
 
 func checkCustomTheme() throws {
+    let legacyJSON = ##"{"name":"旧主题","mode":"dark","codeThemeID":"codex","accent":"#10A37F","ink":"#F4F4F4","surface":"#171717","contrast":55,"backgroundOpacity":0.28,"backgroundBlur":0,"backgroundFit":"cover"}"##.data(using: .utf8)!
+    let legacy = try JSONDecoder().decode(CustomThemeDraft.self, from: legacyJSON)
+    try expect(legacy.backgroundBrightness == 1 && legacy.backgroundFocusX == 0.5 && legacy.backgroundFocusY == 0.5, "旧主题的新图片字段未使用默认值")
+    let legacySettings = try JSONDecoder().decode(BackgroundSkinSettings.self, from: Data(#"{"imageName":"old.png","opacity":0.3,"blur":2,"fit":"cover"}"#.utf8))
+    try expect(legacySettings.brightness == 1 && legacySettings.focusX == 0.5 && legacySettings.focusY == 0.5, "旧图片设置的新字段未使用默认值")
     var draft = CustomThemeDraft()
     draft.name = "   "
     draft.accent = "not-a-color"
@@ -206,17 +211,28 @@ func checkCustomTheme() throws {
         colorSpaceName: .deviceRGB,
         bytesPerRow: 0,
         bitsPerPixel: 0
-    ), let png = bitmap.representation(using: .png, properties: [:]) else {
+    ) else {
         throw CheckFailure.failed("无法生成图片测试夹具")
     }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+    NSColor(calibratedRed: 0.1, green: 0.65, blue: 0.4, alpha: 1).setFill()
+    NSRect(x: 0, y: 0, width: 320, height: 240).fill()
+    NSGraphicsContext.restoreGraphicsState()
+    let coloredPNG = try require(bitmap.representation(using: .png, properties: [:]), "无法生成取色测试夹具")
     let source = root.appendingPathComponent("fixture.png")
-    try png.write(to: source)
-    let name = try store.importBackground(from: source)
-    let imported = try require(store.backgroundURL(named: name), "导入图片不存在")
+    try coloredPNG.write(to: source)
+    let result = try store.importBackground(from: source)
+    let imported = try require(store.backgroundURL(named: result.imageName), "导入图片不存在")
     try expect(imported.pathExtension == "png", "导入图片未规范化为 PNG")
     try expect(fileMode(imported) == 0o600, "导入图片权限不是 0600")
-    draft.backgroundImageName = name
+    try expect(result.suggestedAccent?.range(of: "^#[0-9A-F]{6}$", options: .regularExpression) != nil, "建议强调色格式无效")
+    draft.backgroundImageName = result.imageName
+    draft.backgroundBrightness = 2
+    draft.backgroundFocusX = -1
+    draft.backgroundFocusY = 3
     try expect(draft.skinSettings?.fit == .cover, "图片设置未生成")
+    try expect(draft.skinSettings?.brightness == 1.25 && draft.skinSettings?.focusX == 0 && draft.skinSettings?.focusY == 1, "图片亮度或焦点未限制范围")
 
     let invalid = root.appendingPathComponent("invalid.png")
     try Data("not an image".utf8).write(to: invalid)

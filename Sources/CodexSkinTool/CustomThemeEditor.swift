@@ -92,7 +92,7 @@ struct CustomThemeEditor: View {
             .accessibilityHint("可将单张本地图片拖入此区域，或使用选择图片按钮")
 
             if backgroundURL != nil {
-                HStack(spacing: 22) {
+                HStack(spacing: 18) {
                     field("显示方式") {
                         Picker("显示方式", selection: $draft.backgroundFit) {
                             ForEach(BackgroundFit.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -108,6 +108,21 @@ struct CustomThemeEditor: View {
                     field("模糊 \(Int(draft.backgroundBlur))") {
                         Slider(value: $draft.backgroundBlur, in: 0...24, step: 1)
                             .frame(width: 130)
+                    }
+                }
+
+                HStack(spacing: 18) {
+                    field("亮度 \(Int(draft.backgroundBrightness * 100))%") {
+                        Slider(value: $draft.backgroundBrightness, in: 0.45...1.25, step: 0.05)
+                            .frame(width: 150)
+                    }
+                    field("水平焦点 \(Int(draft.backgroundFocusX * 100))%") {
+                        Slider(value: $draft.backgroundFocusX, in: 0...1, step: 0.01)
+                            .frame(width: 150)
+                    }
+                    field("垂直焦点 \(Int(draft.backgroundFocusY * 100))%") {
+                        Slider(value: $draft.backgroundFocusY, in: 0...1, step: 0.01)
+                            .frame(width: 150)
                     }
                 }
             }

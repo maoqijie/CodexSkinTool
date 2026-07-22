@@ -24,6 +24,7 @@ final class AppModel: ObservableObject {
     @Published var showRestartConfirmation = false
     @Published var customDraft = CustomThemeDraft()
     @Published var customBackgroundURL: URL?
+    @Published private(set) var recentThemeIDs: [String]
     @Published private var libraryBackgroundURLs: [String: URL] = [:]
     @Published var themePendingDeletion: ThemeLibraryItem?
 
@@ -34,6 +35,7 @@ final class AppModel: ObservableObject {
 
     init(service: ThemeService) {
         self.service = service
+        recentThemeIDs = UserDefaults.standard.stringArray(forKey: Self.recentThemeIDsKey) ?? []
         let initialItems = ThemeCatalog.builtIn.map {
             ThemeLibraryItem(id: $0.id, kind: .builtIn, theme: $0)
         }
@@ -97,6 +99,7 @@ final class AppModel: ObservableObject {
     private func performApply(_ target: ThemeLibraryItem) {
         runOperation {
             _ = try await self.service.applyAndRestart(target)
+            self.recordThemeUsage(target.id)
             return "已应用「\(target.theme.name)」"
         }
     }
@@ -149,9 +152,10 @@ final class AppModel: ObservableObject {
     func importBackground(from url: URL) -> Bool {
         guard !isBusy, url.isFileURL else { return false }
         runOperation {
+            let previousAccent = self.customDraft.accent
             self.customDraft = try await self.service.importBackground(from: url, into: self.customDraft)
             self.customBackgroundURL = await self.service.backgroundURL(for: self.customDraft)
-            return "已导入背景图片"
+            return self.customDraft.accent == previousAccent ? "已导入背景图片" : "已导入图片并匹配强调色"
         }
         return true
     }
@@ -235,6 +239,10 @@ final class AppModel: ObservableObject {
                 ensureThemeSelection()
             }
             status = try await service.status()
+            if let appliedID = status.selectedThemeID,
+               themeItems.contains(where: { $0.id == appliedID }) {
+                recordThemeUsage(appliedID)
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -244,6 +252,16 @@ final class AppModel: ObservableObject {
         guard !themeItems.contains(where: { $0.id == selectedThemeID }) else { return }
         selectedThemeID = themeItems.first?.id ?? ""
     }
+
+    private func recordThemeUsage(_ id: String) {
+        guard recentThemeIDs.first != id else { return }
+        recentThemeIDs.removeAll { $0 == id }
+        recentThemeIDs.insert(id, at: 0)
+        recentThemeIDs = Array(recentThemeIDs.prefix(8))
+        UserDefaults.standard.set(recentThemeIDs, forKey: Self.recentThemeIDsKey)
+    }
+
+    private static let recentThemeIDsKey = "recentThemeIDs"
 
 }
 

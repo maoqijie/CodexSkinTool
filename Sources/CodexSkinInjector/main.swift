@@ -10,6 +10,9 @@ private struct Options {
     let opacity: Double
     let blur: Double
     let fit: BackgroundFit
+    let brightness: Double
+    let focusX: Double
+    let focusY: Double
     let surface: String
     let ink: String
     let readyURL: URL
@@ -27,6 +30,9 @@ private struct Options {
               let port = Int(try value("--port")), (1_024...65_535).contains(port),
               let opacity = Double(try value("--opacity")), (0.08...0.85).contains(opacity),
               let blur = Double(try value("--blur")), (0...24).contains(blur),
+              let brightness = Double(try value("--brightness")), (0.45...1.25).contains(brightness),
+              let focusX = Double(try value("--focus-x")), (0...1).contains(focusX),
+              let focusY = Double(try value("--focus-y")), (0...1).contains(focusY),
               let fit = BackgroundFit(rawValue: try value("--fit")) else {
             throw InjectorError.invalidArgument("参数值无效")
         }
@@ -41,6 +47,9 @@ private struct Options {
         self.opacity = opacity
         self.blur = blur
         self.fit = fit
+        self.brightness = brightness
+        self.focusX = focusX
+        self.focusY = focusY
         self.surface = surface
         self.ink = ink
         readyURL = URL(fileURLWithPath: try value("--ready-file"))
@@ -146,7 +155,7 @@ private struct Injector {
                     guard probe?["codex"] as? Bool == true else { continue }
                     let installed = try await cdp.evaluate(expression) as? Bool
                     guard installed == true else { continue }
-                    let verified = try await cdp.evaluate(verifyExpression) as? Bool
+                    let verified = try await cdp.evaluate(try verificationExpression()) as? Bool
                     guard verified == true else { continue }
                     if !markedReady {
                         try Data("{\"status\":\"ready\"}\n".utf8).write(to: options.readyURL, options: .atomic)
@@ -227,13 +236,25 @@ private struct Injector {
         """
     }
 
-    private var verifyExpression: String {
-        """
+    private func verificationExpression() throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "opacity": options.opacity,
+            "brightness": options.brightness,
+            "focusX": options.focusX,
+            "focusY": options.focusY,
+        ])
+        let json = String(decoding: data, as: UTF8.self)
+        return """
         (() => {
+          const cfg = \(json);
           const layer = document.getElementById('codex-skin-tool-background');
           const style = document.getElementById('codex-skin-tool-style');
-          return Boolean(layer && style && getComputedStyle(layer).backgroundImage !== 'none' &&
-            getComputedStyle(layer).pointerEvents === 'none');
+          if (!layer || !style || document.documentElement.dataset.codexSkinTool !== 'background-v2') return false;
+          const computed = getComputedStyle(layer);
+          return computed.backgroundImage !== 'none' && computed.pointerEvents === 'none' &&
+            Math.abs(Number(computed.opacity) - cfg.opacity) < 0.001 &&
+            computed.filter.includes(`brightness(${cfg.brightness})`) &&
+            computed.backgroundPosition === `${cfg.focusX * 100}% ${cfg.focusY * 100}%`;
         })()
         """
     }
@@ -244,6 +265,9 @@ private struct Injector {
             "opacity": options.opacity,
             "blur": options.blur,
             "fit": options.fit.rawValue,
+            "brightness": options.brightness,
+            "focusX": options.focusX,
+            "focusY": options.focusY,
             "surface": options.surface,
             "ink": options.ink,
         ]
@@ -261,8 +285,8 @@ private struct Injector {
           style.textContent = `
             #codex-skin-tool-background {
               position: fixed; inset: 0; z-index: 0; pointer-events: none;
-              background: center / ${cfg.fit} no-repeat url("${cfg.image}");
-              opacity: ${cfg.opacity}; filter: blur(${cfg.blur}px);
+              background: ${cfg.focusX * 100}% ${cfg.focusY * 100}% / ${cfg.fit} no-repeat url("${cfg.image}");
+              opacity: ${cfg.opacity}; filter: brightness(${cfg.brightness}) blur(${cfg.blur}px);
               transform: scale(${cfg.blur > 0 ? 1.04 : 1});
             }
             #root, body > [data-radix-portal] { position: relative; z-index: 1; }
@@ -275,7 +299,7 @@ private struct Injector {
           layer.setAttribute('aria-hidden', 'true');
           document.head.append(style);
           document.body.prepend(layer);
-          document.documentElement.dataset.codexSkinTool = 'background-v1';
+          document.documentElement.dataset.codexSkinTool = 'background-v2';
           return true;
         })()
         """

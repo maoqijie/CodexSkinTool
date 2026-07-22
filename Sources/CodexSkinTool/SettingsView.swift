@@ -12,7 +12,10 @@ struct SettingsView: View {
                         backgroundURL: model.customBackgroundURL,
                         backgroundOpacity: model.customDraft.backgroundOpacity,
                         backgroundBlur: model.customDraft.backgroundBlur,
-                        backgroundFit: model.customDraft.backgroundFit
+                        backgroundFit: model.customDraft.backgroundFit,
+                        backgroundBrightness: model.customDraft.backgroundBrightness,
+                        backgroundFocusX: model.customDraft.backgroundFocusX,
+                        backgroundFocusY: model.customDraft.backgroundFocusY
                     )
                     .frame(maxWidth: 760, maxHeight: 320)
 

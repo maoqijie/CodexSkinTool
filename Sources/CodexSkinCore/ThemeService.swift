@@ -129,15 +129,18 @@ public actor ThemeService {
     public func importBackground(from url: URL, into draft: CustomThemeDraft) throws -> CustomThemeDraft {
         let previousName = draft.backgroundImageName
         var updated = draft
-        let importedName = try customStore.importBackground(from: url)
-        updated.backgroundImageName = importedName
+        let imported = try customStore.importBackground(from: url)
+        updated.backgroundImageName = imported.imageName
+        if let suggestedAccent = imported.suggestedAccent {
+            updated.accent = suggestedAccent
+        }
         do {
             try customStore.save(updated)
         } catch {
-            try? customStore.removeBackground(named: importedName)
+            try? customStore.removeBackground(named: imported.imageName)
             throw error
         }
-        if previousName != importedName { try? customStore.removeBackground(named: previousName) }
+        if previousName != imported.imageName { try? customStore.removeBackground(named: previousName) }
         return updated
     }
 

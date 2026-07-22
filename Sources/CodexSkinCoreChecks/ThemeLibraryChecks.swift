@@ -28,7 +28,7 @@ func checkThemeLibrary() throws {
     try png.write(to: source)
 
     var draft = CustomThemeDraft(name: "保存主题")
-    draft.backgroundImageName = try imageStore.importBackground(from: source)
+    draft.backgroundImageName = try imageStore.importBackground(from: source).imageName
     let originalDraftImage = draft.backgroundImageName
     let saved = try library.saveCustom(draft)
     try expect(saved.id.hasPrefix("user-"), "自定义主题 ID 前缀错误")
@@ -42,7 +42,7 @@ func checkThemeLibrary() throws {
 
     var replacement = draft
     replacement.name = "覆盖主题"
-    replacement.backgroundImageName = try imageStore.importBackground(from: source)
+    replacement.backgroundImageName = try imageStore.importBackground(from: source).imageName
     let oldSnapshot = saved.draft.backgroundImageName
     let updated = try library.saveCustom(replacement, replacing: saved.id)
     try expect(updated.id == saved.id, "覆盖保存改变了主题 ID")
@@ -69,7 +69,7 @@ func checkThemeLibrary() throws {
     let corruptImageStore = CustomThemeStore(supportDirectoryURL: corruptRoot)
     let corruptLibrary = ThemeLibraryStore(supportDirectoryURL: corruptRoot)
     try FileManager.default.createDirectory(at: corruptRoot, withIntermediateDirectories: true)
-    let sharedName = try corruptImageStore.importBackground(from: source)
+    let sharedName = try corruptImageStore.importBackground(from: source).imageName
     var first = CustomThemeDraft(name: "主题一")
     first.backgroundImageName = sharedName
     var second = CustomThemeDraft(name: "主题二")

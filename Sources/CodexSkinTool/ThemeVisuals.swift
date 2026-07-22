@@ -55,6 +55,9 @@ struct ThemePreview: View {
     var backgroundOpacity: Double = 0.28
     var backgroundBlur: Double = 0
     var backgroundFit: BackgroundFit = .cover
+    var backgroundBrightness: Double = 1
+    var backgroundFocusX: Double = 0.5
+    var backgroundFocusY: Double = 0.5
 
     private var surface: Color { Color(hex: theme.chromeTheme.surface) }
     private var ink: Color { Color(hex: theme.chromeTheme.ink) }
@@ -65,7 +68,7 @@ struct ThemePreview: View {
             ZStack {
                 surface
                 if let backgroundURL, let image = NSImage(contentsOf: backgroundURL) {
-                    background(image)
+                    background(image, in: proxy.size)
                 }
                 HStack(spacing: 0) {
                     sidebar(width: max(118, proxy.size.width * 0.27))
@@ -84,18 +87,26 @@ struct ThemePreview: View {
     }
 
     @ViewBuilder
-    private func background(_ image: NSImage) -> some View {
+    private func background(_ image: NSImage, in availableSize: CGSize) -> some View {
         if backgroundFit == .cover {
+            let scale = max(availableSize.width / image.size.width, availableSize.height / image.size.height)
+            let renderedSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
             Image(nsImage: image)
                 .resizable()
-                .scaledToFill()
+                .frame(width: renderedSize.width, height: renderedSize.height)
+                .offset(
+                    x: (renderedSize.width - availableSize.width) * (0.5 - backgroundFocusX),
+                    y: (renderedSize.height - availableSize.height) * (0.5 - backgroundFocusY)
+                )
                 .blur(radius: backgroundBlur / 2)
+                .brightness(backgroundBrightness - 1)
                 .opacity(backgroundOpacity)
         } else {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
                 .blur(radius: backgroundBlur / 2)
+                .brightness(backgroundBrightness - 1)
                 .opacity(backgroundOpacity)
         }
     }
