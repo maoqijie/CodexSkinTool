@@ -51,6 +51,7 @@ struct AppSidebar: View {
                     Image(systemName: "arrow.clockwise")
                 }
                 .buttonStyle(.plain)
+                .disabled(model.isBusy)
                 .help("刷新状态")
                 .accessibilityLabel("刷新 Codex 状态")
             }

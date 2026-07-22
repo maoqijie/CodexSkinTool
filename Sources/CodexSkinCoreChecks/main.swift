@@ -361,6 +361,7 @@ do {
     try checkCatalog()
     try checkAppVersion()
     try checkCustomTheme()
+    try checkThemeLibrary()
     try checkStore()
     print("PASS: CodexSkinCoreChecks")
 } catch {

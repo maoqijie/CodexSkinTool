@@ -36,10 +36,36 @@ struct SettingsView: View {
                 .padding(20)
             }
             Divider()
-            ThemeActionBar(applyTitle: "应用自定义主题") { model.requestApplyCustom() }
+            HStack(spacing: 10) {
+                if let message = model.message {
+                    Label(message, systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AppPalette.success)
+                        .lineLimit(1)
+                }
+                if model.hasHiddenBuiltIns {
+                    Button("恢复内置主题", systemImage: "arrow.counterclockwise") {
+                        model.restoreBuiltInThemes()
+                    }
+                    .disabled(model.isBusy)
+                }
+                Spacer()
+                Button("保存到我的主题", systemImage: "square.and.arrow.down") {
+                    model.saveCustomToLibrary()
+                }
+                .disabled(model.isBusy)
+                Button("应用当前配置", systemImage: "paintbrush.fill") {
+                    model.requestApplyCustom()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppPalette.accent)
+                .disabled(model.isBusy || !model.status.app.isInstalled)
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 64)
+            .background(.bar)
         }
         .background(AppPalette.canvas)
         .navigationTitle("设置")
-        .onAppear { model.prepareSettings() }
     }
 }

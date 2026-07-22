@@ -66,8 +66,10 @@ public struct ThemeChangeResult: Sendable {
 public actor ThemeService {
     private let store: ConfigurationStore
     private let customStore: CustomThemeStore
+    private let libraryStore: ThemeLibraryStore
     private let backgroundSession: BackgroundSkinSession
     private var appService: CodexAppService?
+    private var isChangingBackgroundSession = false
 
     public init(
         paths: ConfigurationPaths = .live,
@@ -75,6 +77,7 @@ public actor ThemeService {
     ) {
         self.store = ConfigurationStore(paths: paths)
         self.customStore = CustomThemeStore(supportDirectoryURL: paths.supportDirectoryURL)
+        self.libraryStore = ThemeLibraryStore(supportDirectoryURL: paths.supportDirectoryURL)
         self.backgroundSession = BackgroundSkinSession(supportDirectoryURL: paths.supportDirectoryURL)
         self.appService = appService
     }
@@ -82,7 +85,11 @@ public actor ThemeService {
     public func status() async throws -> ThemeServiceStatus {
         let snapshot = try store.snapshot()
         let service = await resolvedAppService()
-        let backgroundSkin = try await backgroundSession.reconcile(appService: service)
+        let backgroundSkin = if isChangingBackgroundSession {
+            backgroundSession.status()
+        } else {
+            try await backgroundSession.reconcile(appService: service)
+        }
         let app = await service.status()
         return ThemeServiceStatus(
             selectedThemeID: snapshot.state?.selectedThemeID,
@@ -100,6 +107,23 @@ public actor ThemeService {
 
     public func saveCustomTheme(_ draft: CustomThemeDraft) throws {
         try customStore.save(draft)
+    }
+
+    public func themeLibrary() throws -> [ThemeLibraryItem] {
+        try libraryStore.items()
+    }
+
+    public func saveThemeToLibrary(_ draft: CustomThemeDraft) throws -> ThemeLibraryItem {
+        let saved = try libraryStore.saveCustom(draft)
+        return ThemeLibraryItem(id: saved.id, kind: .custom, theme: saved.theme, customDraft: saved.draft)
+    }
+
+    public func deleteTheme(itemID: String) throws {
+        try libraryStore.delete(itemID: itemID)
+    }
+
+    public func restoreBuiltInThemes() throws {
+        try libraryStore.restoreBuiltIns()
     }
 
     public func importBackground(from url: URL, into draft: CustomThemeDraft) throws -> CustomThemeDraft {
@@ -159,12 +183,35 @@ public actor ThemeService {
     }
 
     @discardableResult
-    public func applyCustomAndRestart(_ draft: CustomThemeDraft) async throws -> ThemeChangeResult {
+    public func applyAndRestart(_ item: ThemeLibraryItem, timeout: TimeInterval = 10) async throws -> ThemeChangeResult {
+        switch item.kind {
+        case .builtIn:
+            return try await applyAndRestart(themeID: item.id, timeout: timeout)
+        case .custom:
+            guard let draft = item.customDraft else {
+                throw ThemeServiceError.invalidState("自定义主题内容缺失")
+            }
+            return try await applyCustomAndRestart(
+                draft,
+                selectedThemeID: item.id,
+                persistDraft: false
+            )
+        }
+    }
+
+    @discardableResult
+    public func applyCustomAndRestart(
+        _ draft: CustomThemeDraft,
+        selectedThemeID: String = "custom",
+        persistDraft: Bool = true
+    ) async throws -> ThemeChangeResult {
         let checkpoint = try store.checkpoint()
-        try customStore.save(draft)
+        if persistDraft { try customStore.save(draft) }
+        isChangingBackgroundSession = true
+        defer { isChangingBackgroundSession = false }
         do {
             let app = await resolvedAppService().status()
-            try store.apply(theme: draft.theme, needsRestart: app.isRunning)
+            try store.apply(theme: draft.theme(id: selectedThemeID), needsRestart: app.isRunning)
             if let skin = draft.skinSettings {
                 try await backgroundSession.start(
                     settings: skin,
@@ -186,7 +233,7 @@ public actor ThemeService {
             try? await MainActor.run { try service.open() }
             throw error
         }
-        return ThemeChangeResult(changed: true, selectedThemeID: draft.theme.id, needsRestart: false)
+        return ThemeChangeResult(changed: true, selectedThemeID: selectedThemeID, needsRestart: false)
     }
 
     @discardableResult

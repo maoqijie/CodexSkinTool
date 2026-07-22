@@ -12,22 +12,11 @@ enum AppSection: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-private enum ApplyTarget {
-    case builtIn(Theme)
-    case custom(CustomThemeDraft)
-
-    var name: String {
-        switch self {
-        case .builtIn(let theme): theme.name
-        case .custom(let draft): draft.theme.name
-        }
-    }
-}
-
 @MainActor
 final class AppModel: ObservableObject {
     @Published var selectedSection = AppSection.themes
     @Published var selectedThemeID: String
+    @Published var themeItems: [ThemeLibraryItem]
     @Published var status = ThemeServiceStatus.checking
     @Published var isBusy = false
     @Published var message: String?
@@ -35,38 +24,46 @@ final class AppModel: ObservableObject {
     @Published var showRestartConfirmation = false
     @Published var customDraft = CustomThemeDraft()
     @Published var customBackgroundURL: URL?
+    @Published private var libraryBackgroundURLs: [String: URL] = [:]
+    @Published var themePendingDeletion: ThemeLibraryItem?
 
-    let themes: [Theme]
     private let service: ThemeService
     private let appService = CodexAppService()
-    private var pendingApplyTarget: ApplyTarget?
+    private var pendingApplyTarget: ThemeLibraryItem?
     private var didLoadCustomDraft = false
 
     init(service: ThemeService) {
         self.service = service
-        themes = ThemeCatalog.builtIn
-        selectedThemeID = themes.first?.id ?? ""
+        let initialItems = ThemeCatalog.builtIn.map {
+            ThemeLibraryItem(id: $0.id, kind: .builtIn, theme: $0)
+        }
+        themeItems = initialItems
+        selectedThemeID = initialItems.first?.id ?? ""
     }
 
-    var selectedTheme: Theme {
-        if selectedThemeID == "custom" { return customDraft.theme }
-        return themes.first(where: { $0.id == selectedThemeID }) ?? themes[0]
-    }
+    var selectedItem: ThemeLibraryItem? { themeItems.first { $0.id == selectedThemeID } }
+    var selectedTheme: Theme? { selectedItem?.theme }
 
-    var isCustomSelected: Bool { selectedThemeID == "custom" }
     var isAboutSelected: Bool { selectedSection == .about }
+    var hasHiddenBuiltIns: Bool { themeItems.filter { $0.kind == .builtIn }.count < ThemeCatalog.builtIn.count }
 
     func refresh() {
         Task { await loadStatus(loadCustomDraft: !didLoadCustomDraft) }
     }
 
     func requestApply() {
-        requestApply(target: .builtIn(selectedTheme))
+        guard let selectedItem else { return }
+        requestApply(target: selectedItem)
     }
 
     func requestApplyCustom() {
-        selectedThemeID = "custom"
-        requestApply(target: .custom(customDraft))
+        let draft = customDraft
+        requestApply(target: ThemeLibraryItem(
+            id: "custom",
+            kind: .custom,
+            theme: draft.theme,
+            customDraft: draft
+        ))
     }
 
     func requestApplyForCurrentPage() {
@@ -74,12 +71,7 @@ final class AppModel: ObservableObject {
     }
 
     func prepareThemeGallery() {
-        guard isCustomSelected else { return }
-        selectedThemeID = themes.first?.id ?? ""
-    }
-
-    func prepareSettings() {
-        selectedThemeID = "custom"
+        ensureThemeSelection()
     }
 
     func confirmPendingApply() {
@@ -92,7 +84,7 @@ final class AppModel: ObservableObject {
         pendingApplyTarget = nil
     }
 
-    private func requestApply(target: ApplyTarget) {
+    private func requestApply(target: ThemeLibraryItem) {
         pendingApplyTarget = target
         if status.app.isRunning {
             showRestartConfirmation = true
@@ -102,15 +94,43 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func performApply(_ target: ApplyTarget) {
+    private func performApply(_ target: ThemeLibraryItem) {
         runOperation {
-            switch target {
-            case .builtIn(let theme):
-                _ = try await self.service.applyAndRestart(themeID: theme.id)
-            case .custom(let draft):
-                _ = try await self.service.applyCustomAndRestart(draft)
-            }
-            return "已应用「\(target.name)」"
+            _ = try await self.service.applyAndRestart(target)
+            return "已应用「\(target.theme.name)」"
+        }
+    }
+
+    func saveCustomToLibrary() {
+        let draft = customDraft
+        runOperation(reloadLibrary: true) {
+            let saved = try await self.service.saveThemeToLibrary(draft)
+            self.selectedThemeID = saved.id
+            return "已保存「\(saved.theme.name)」"
+        }
+    }
+
+    func requestDelete(_ item: ThemeLibraryItem) {
+        themePendingDeletion = item
+    }
+
+    func cancelThemeDeletion() {
+        themePendingDeletion = nil
+    }
+
+    func confirmThemeDeletion() {
+        guard let item = themePendingDeletion else { return }
+        themePendingDeletion = nil
+        runOperation(reloadLibrary: true) {
+            try await self.service.deleteTheme(itemID: item.id)
+            return "已删除「\(item.theme.name)」"
+        }
+    }
+
+    func restoreBuiltInThemes() {
+        runOperation(reloadLibrary: true) {
+            try await self.service.restoreBuiltInThemes()
+            return "已恢复内置主题"
         }
     }
 
@@ -131,7 +151,6 @@ final class AppModel: ObservableObject {
         runOperation {
             self.customDraft = try await self.service.importBackground(from: url, into: self.customDraft)
             self.customBackgroundURL = await self.service.backgroundURL(for: self.customDraft)
-            self.selectedThemeID = "custom"
             return "已导入背景图片"
         }
         return true
@@ -143,6 +162,11 @@ final class AppModel: ObservableObject {
             self.customBackgroundURL = nil
             return "已移除背景图片"
         }
+    }
+
+    func backgroundURL(for draft: CustomThemeDraft) -> URL? {
+        guard let name = draft.backgroundImageName else { return nil }
+        return libraryBackgroundURLs[name]
     }
 
     func restore() {
@@ -167,7 +191,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func runOperation(_ operation: @escaping () async throws -> String) {
+    private func runOperation(
+        reloadLibrary: Bool = false,
+        _ operation: @escaping () async throws -> String
+    ) {
         guard !isBusy else { return }
         isBusy = true
         message = nil
@@ -179,11 +206,14 @@ final class AppModel: ObservableObject {
                 errorMessage = error.localizedDescription
             }
             isBusy = false
-            await loadStatus()
+            await loadStatus(loadThemeLibrary: reloadLibrary)
         }
     }
 
-    private func loadStatus(loadCustomDraft: Bool = false) async {
+    private func loadStatus(
+        loadCustomDraft: Bool = false,
+        loadThemeLibrary: Bool = true
+    ) async {
         do {
             if loadCustomDraft {
                 let draft = try await service.customTheme()
@@ -191,11 +221,30 @@ final class AppModel: ObservableObject {
                 customBackgroundURL = await service.backgroundURL(for: draft)
                 didLoadCustomDraft = true
             }
+            if loadThemeLibrary {
+                themeItems = try await service.themeLibrary()
+                var urls: [String: URL] = [:]
+                for item in themeItems {
+                    if let draft = item.customDraft,
+                       let name = draft.backgroundImageName,
+                       let url = await service.backgroundURL(for: draft) {
+                        urls[name] = url
+                    }
+                }
+                libraryBackgroundURLs = urls
+                ensureThemeSelection()
+            }
             status = try await service.status()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
+
+    private func ensureThemeSelection() {
+        guard !themeItems.contains(where: { $0.id == selectedThemeID }) else { return }
+        selectedThemeID = themeItems.first?.id ?? ""
+    }
+
 }
 
 extension ThemeServiceStatus {

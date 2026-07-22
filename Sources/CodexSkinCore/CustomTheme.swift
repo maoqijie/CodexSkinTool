@@ -56,8 +56,12 @@ public struct CustomThemeDraft: Codable, Equatable, Sendable {
     }
 
     public var theme: Theme {
+        theme(id: "custom")
+    }
+
+    public func theme(id: String) -> Theme {
         Theme(
-            id: "custom",
+            id: id,
             name: validatedName,
             description: backgroundImageName == nil ? "自定义配色与代码主题" : "自定义配色与本地图片背景",
             mode: mode,
@@ -206,6 +210,17 @@ public struct CustomThemeStore {
     public func removeBackground(named name: String?) throws {
         guard let url = backgroundURL(named: name) else { return }
         try fileManager.removeItem(at: url)
+    }
+
+    public func copyBackground(named name: String?) throws -> String? {
+        guard let name else { return nil }
+        guard let source = backgroundURL(named: name) else {
+            throw ThemeServiceError.invalidBackground("已选择的图片不存在，请重新选择")
+        }
+        let data = try limitedData(from: source, maximumBytes: 16 * 1_024 * 1_024)
+        let copyName = "background-\(UUID().uuidString).png"
+        try secureWrite(data, to: backgroundDirectoryURL.appendingPathComponent(copyName))
+        return copyName
     }
 
     private func secureWrite(_ data: Data, to destination: URL) throws {

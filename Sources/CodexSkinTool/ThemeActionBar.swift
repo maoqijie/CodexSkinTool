@@ -27,7 +27,7 @@ struct ThemeActionBar: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(AppPalette.accent)
-            .disabled(model.isBusy || !model.status.app.isInstalled)
+            .disabled(model.isBusy || !model.status.app.isInstalled || model.selectedItem == nil)
             .keyboardShortcut(.return, modifiers: [.command])
         }
         .padding(.horizontal, 20)
