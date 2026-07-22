@@ -137,6 +137,26 @@ public struct ThemeLibraryStore {
             .removeBackground(named: removed.draft.backgroundImageName)
     }
 
+    public func renameCustom(itemID: String, name: String) throws -> SavedCustomTheme {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty else {
+            throw ThemeServiceError.invalidState("主题名称不能为空")
+        }
+        guard normalizedName.count <= 40 else {
+            throw ThemeServiceError.invalidState("主题名称不能超过 40 个字符")
+        }
+        guard normalizedName.rangeOfCharacter(from: .controlCharacters) == nil else {
+            throw ThemeServiceError.invalidState("主题名称不能包含控制字符")
+        }
+        var state = try loadState()
+        guard let index = state.customThemes.firstIndex(where: { $0.id == itemID }) else {
+            throw ThemeServiceError.invalidState("只能重命名已保存的自定义主题")
+        }
+        state.customThemes[index].draft.name = normalizedName
+        try write(state)
+        return state.customThemes[index]
+    }
+
     public func restoreBuiltIns() throws {
         var state = try loadState()
         guard !state.hiddenBuiltInIDs.isEmpty else { return }

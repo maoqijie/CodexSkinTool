@@ -122,6 +122,11 @@ public actor ThemeService {
         try libraryStore.delete(itemID: itemID)
     }
 
+    public func renameTheme(itemID: String, name: String) throws -> ThemeLibraryItem {
+        let saved = try libraryStore.renameCustom(itemID: itemID, name: name)
+        return ThemeLibraryItem(id: saved.id, kind: .custom, theme: saved.theme, customDraft: saved.draft)
+    }
+
     public func restoreBuiltInThemes() throws {
         try libraryStore.restoreBuiltIns()
     }

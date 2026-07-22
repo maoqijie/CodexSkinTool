@@ -48,6 +48,41 @@ func checkThemeLibrary() throws {
     try expect(updated.id == saved.id, "覆盖保存改变了主题 ID")
     try expect(imageStore.backgroundURL(named: oldSnapshot) == nil, "覆盖保存未清理旧背景快照")
 
+    let renamed = try library.renameCustom(itemID: updated.id, name: "  新主题名  ")
+    try expect(renamed.id == updated.id, "重命名改变了主题 ID")
+    try expect(renamed.theme.name == "新主题名", "重命名未去除首尾空白")
+    try expect(renamed.draft.backgroundImageName == updated.draft.backgroundImageName, "重命名改变了背景图片")
+    try expect(imageStore.backgroundURL(named: renamed.draft.backgroundImageName) != nil, "重命名删除了背景图片")
+    try expect(try library.items().first(where: { $0.id == updated.id })?.theme.name == "新主题名", "重命名未持久化")
+    do {
+        _ = try library.renameCustom(itemID: updated.id, name: "   ")
+        throw CheckFailure.failed("重命名未拒绝空名称")
+    } catch ThemeServiceError.invalidState {
+        // Expected.
+    }
+    do {
+        _ = try library.renameCustom(itemID: updated.id, name: "无效\n名称")
+        throw CheckFailure.failed("重命名未拒绝控制字符")
+    } catch ThemeServiceError.invalidState {
+        // Expected.
+    }
+    do {
+        _ = try library.renameCustom(itemID: updated.id, name: String(repeating: "名", count: 41))
+        throw CheckFailure.failed("重命名未拒绝超长名称")
+    } catch ThemeServiceError.invalidState {
+        // Expected.
+    }
+    let boundaryName = String(repeating: "名", count: 40)
+    try expect(try library.renameCustom(itemID: updated.id, name: boundaryName).theme.name == boundaryName, "重命名错误拒绝 40 字名称")
+    _ = try library.renameCustom(itemID: updated.id, name: "新主题名")
+    do {
+        _ = try library.renameCustom(itemID: ThemeCatalog.builtIn[0].id, name: "不能修改")
+        throw CheckFailure.failed("重命名未拒绝内置主题")
+    } catch ThemeServiceError.invalidState {
+        // Expected.
+    }
+    try expect(try library.items().first(where: { $0.id == updated.id })?.theme.name == "新主题名", "失败的重命名改变了原名称")
+
     let updatedImage = updated.draft.backgroundImageName
     try library.delete(itemID: updated.id)
     try expect(imageStore.backgroundURL(named: updatedImage) == nil, "自定义主题删除未清理背景快照")

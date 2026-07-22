@@ -54,6 +54,15 @@ struct ThemeGalleryView: View {
         } message: {
             Text(deleteMessage)
         }
+        .alert("重命名主题", isPresented: Binding(
+            get: { model.themePendingRename != nil },
+            set: { if !$0 { model.cancelThemeRename() } }
+        )) {
+            TextField("主题名称", text: $model.renameThemeName)
+            Button("取消", role: .cancel) { model.cancelThemeRename() }
+            Button("保存") { model.confirmThemeRename() }
+                .disabled(renameNameIsInvalid)
+        }
     }
 
     private func gallery(selected: ThemeLibraryItem) -> some View {
@@ -113,6 +122,7 @@ struct ThemeGalleryView: View {
                         selected: model.selectedThemeID == item.id,
                         active: model.status.selectedThemeID == item.id,
                         select: { model.selectedThemeID = item.id },
+                        rename: item.kind == .custom ? { model.requestRename(item) } : nil,
                         delete: { model.requestDelete(item) }
                     )
                 }
@@ -187,6 +197,11 @@ struct ThemeGalleryView: View {
             ? "「\(item.theme.name)」会从本机主题库隐藏，可在设置中恢复。"
             : "「\(item.theme.name)」及其保存的背景图片将被删除。"
     }
+
+    private var renameNameIsInvalid: Bool {
+        let name = model.renameThemeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty || name.count > 40 || name.rangeOfCharacter(from: .controlCharacters) != nil
+    }
 }
 
 private enum ThemeLibraryFilter: String, CaseIterable, Identifiable {
@@ -210,6 +225,7 @@ private struct ThemeChoice: View {
     let selected: Bool
     let active: Bool
     let select: () -> Void
+    let rename: (() -> Void)?
     let delete: () -> Void
 
     var body: some View {
@@ -232,7 +248,7 @@ private struct ThemeChoice: View {
                         .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .padding(10)
-                .padding(.trailing, 20)
+                .padding(.trailing, rename == nil ? 20 : 46)
                 .frame(maxWidth: .infinity, minHeight: 70, alignment: .leading)
                 .background(selected ? AppPalette.accent.opacity(0.08) : AppPalette.panel)
                 .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -244,12 +260,19 @@ private struct ThemeChoice: View {
             .buttonStyle(.plain)
             .accessibilityHint("选择并预览此主题")
 
-            Button(action: delete) { Image(systemName: "trash") }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .padding(9)
-                .help("删除主题")
-                .accessibilityLabel("删除 \(item.theme.name)")
+            HStack(spacing: 10) {
+                if let rename {
+                    Button(action: rename) { Image(systemName: "pencil") }
+                        .help("重命名主题")
+                        .accessibilityLabel("重命名 \(item.theme.name)")
+                }
+                Button(action: delete) { Image(systemName: "trash") }
+                    .help("删除主题")
+                    .accessibilityLabel("删除 \(item.theme.name)")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .padding(9)
         }
     }
 }

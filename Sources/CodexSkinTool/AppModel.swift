@@ -27,6 +27,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var recentThemeIDs: [String]
     @Published private var libraryBackgroundURLs: [String: URL] = [:]
     @Published var themePendingDeletion: ThemeLibraryItem?
+    @Published var themePendingRename: ThemeLibraryItem?
+    @Published var renameThemeName = ""
 
     private let service: ThemeService
     private let appService = CodexAppService()
@@ -115,6 +117,28 @@ final class AppModel: ObservableObject {
 
     func requestDelete(_ item: ThemeLibraryItem) {
         themePendingDeletion = item
+    }
+
+    func requestRename(_ item: ThemeLibraryItem) {
+        guard item.kind == .custom else { return }
+        renameThemeName = item.theme.name
+        themePendingRename = item
+    }
+
+    func cancelThemeRename() {
+        themePendingRename = nil
+        renameThemeName = ""
+    }
+
+    func confirmThemeRename() {
+        guard let item = themePendingRename else { return }
+        let name = renameThemeName
+        cancelThemeRename()
+        runOperation(reloadLibrary: true) {
+            let renamed = try await self.service.renameTheme(itemID: item.id, name: name)
+            self.selectedThemeID = renamed.id
+            return "已重命名为「\(renamed.theme.name)」"
+        }
     }
 
     func cancelThemeDeletion() {
