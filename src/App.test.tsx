@@ -36,6 +36,7 @@ describe("CodexSkinTool", () => {
     expect(screen.queryByText("调整颜色、代码主题和本地背景，预览会即时更新。")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "关于" }));
+    expect(screen.getByRole("img", { name: "CodexSkinTool 图标" })).toBeInTheDocument();
     expect(screen.queryByText("跨平台的 Codex Desktop 本地换肤工具。")).not.toBeInTheDocument();
     expect(screen.queryByText("同一套工程")).not.toBeInTheDocument();
     expect(screen.queryByText("本地与可恢复")).not.toBeInTheDocument();

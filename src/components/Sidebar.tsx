@@ -1,4 +1,5 @@
 import { CircleHelp, MonitorCog, Palette, SlidersHorizontal } from "lucide-react";
+import appIcon from "../assets/app-icon-ui.png";
 import type { Section } from "../useAppModel";
 import type { ServiceStatus } from "../contracts";
 
@@ -18,7 +19,7 @@ export function Sidebar({ section, status, onNavigate }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="brand">
-        <span className="brand-mark"><Palette size={17} strokeWidth={2.2} /></span>
+        <img className="brand-mark" src={appIcon} alt="" />
         <strong>CodexSkinTool</strong>
       </div>
       <nav className="navigation" aria-label="主导航">
