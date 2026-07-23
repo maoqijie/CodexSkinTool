@@ -2,12 +2,73 @@ name: CI
 
 on:
   push:
+    branches:
+      - "**"
   pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  release-metadata:
+    name: Detect version release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should-release: ${{ steps.version.outputs.should-release }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect and validate version change
+        id: version
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '\r\n' < VERSION)"
+          package_version="$(node -p "require('./package.json').version")"
+          tauri_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          cargo_version="$(awk -F'"' '/^version = "/ { print $2; exit }' src-tauri/Cargo.toml)"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "VERSION is not a supported semantic version: $version" >&2
+            exit 1
+          fi
+
+          for declared_version in "$package_version" "$tauri_version" "$cargo_version"; do
+            if [[ "$declared_version" != "$version" ]]; then
+              echo "Version declarations are inconsistent with VERSION ($version)." >&2
+              exit 1
+            fi
+          done
+
+          previous_version=""
+          zero_sha="0000000000000000000000000000000000000000"
+          if [[ "$BEFORE_SHA" != "$zero_sha" ]]; then
+            if ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags --depth=1 origin "$BEFORE_SHA"
+            fi
+            git cat-file -e "$BEFORE_SHA^{commit}"
+            previous_version="$(git show "$BEFORE_SHA:VERSION" 2>/dev/null | tr -d '\r\n' || true)"
+          fi
+
+          should_release=false
+          if [[ "$version" != "$previous_version" ]]; then
+            should_release=true
+          fi
+
+          echo "should-release=$should_release" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
   desktop:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -105,24 +166,22 @@ jobs:
 
   release:
     name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: desktop
+    if: needs.release-metadata.outputs.should-release == 'true'
+    needs:
+      - release-metadata
+      - desktop
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: release-${{ github.repository }}-${{ needs.release-metadata.outputs.tag }}
+      cancel-in-progress: false
     permissions:
       contents: write
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Validate release version
-        shell: bash
-        run: |
-          expected_tag="v$(tr -d '\r\n' < VERSION)"
-          if [[ "$GITHUB_REF_NAME" != "$expected_tag" ]]; then
-            echo "Release tag $GITHUB_REF_NAME does not match VERSION ($expected_tag)." >&2
-            exit 1
-          fi
+        with:
+          fetch-depth: 0
 
       - name: Download macOS bundles
         uses: actions/download-artifact@v4
@@ -136,23 +195,70 @@ jobs:
           name: CodexSkinTool-Windows
           path: release-assets/windows
 
+      - name: Validate release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          macos_archives=(release-assets/macos/macos/*.app.zip)
+          macos_images=(release-assets/macos/dmg/*.dmg)
+          windows_nsis=(release-assets/windows/nsis/*.exe)
+          windows_msi=(release-assets/windows/msi/*.msi)
+
+          for asset_group in macos_archives macos_images windows_nsis windows_msi; do
+            declare -n assets_ref="$asset_group"
+            if (( ${#assets_ref[@]} == 0 )); then
+              echo "Release asset group $asset_group is empty." >&2
+              exit 1
+            fi
+          done
+
+      - name: Create release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin
+          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            tag_commit="$(git rev-parse "$RELEASE_TAG^{commit}")"
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "Release tag $RELEASE_TAG already points to $tag_commit, not $GITHUB_SHA." >&2
+              exit 1
+            fi
+          else
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "$RELEASE_TAG"
+          fi
+
       - name: Publish GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.tag }}
         run: |
+          set -euo pipefail
+
+          shopt -s nullglob
+          macos_archives=(release-assets/macos/macos/*.app.zip)
+          macos_images=(release-assets/macos/dmg/*.dmg)
+          windows_nsis=(release-assets/windows/nsis/*.exe)
+          windows_msi=(release-assets/windows/msi/*.msi)
+
           assets=(
-            release-assets/macos/macos/*.app.zip
-            release-assets/macos/dmg/*.dmg
-            release-assets/windows/nsis/*.exe
-            release-assets/windows/msi/*.msi
+            "${macos_archives[@]}"
+            "${macos_images[@]}"
+            "${windows_nsis[@]}"
+            "${windows_msi[@]}"
           )
 
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
               --verify-tag \
               --generate-notes \
-              --title "CodexSkinTool $GITHUB_REF_NAME"
+              --title "CodexSkinTool $RELEASE_TAG"
           fi
