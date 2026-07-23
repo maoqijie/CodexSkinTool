@@ -22,6 +22,7 @@ jobs:
             artifact: CodexSkinTool-macOS
             paths: |
               src-tauri/target/release/bundle/macos/*.app
+              src-tauri/target/release/bundle/macos/*.app.zip
               src-tauri/target/release/bundle/dmg/*.dmg
           - name: Windows
             os: windows-2025
@@ -84,6 +85,13 @@ jobs:
         if: runner.os == 'macOS'
         run: npm run tauri -- build --bundles dmg
 
+      - name: Package macOS application archive
+        if: runner.os == 'macOS'
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            src-tauri/target/release/bundle/macos/CodexSkinTool.app \
+            src-tauri/target/release/bundle/macos/CodexSkinTool.app.zip
+
       - name: Build Windows installers
         if: runner.os == 'Windows'
         run: npm run tauri -- build --bundles "${{ matrix.bundles }}"
@@ -94,3 +102,57 @@ jobs:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.paths }}
           if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          expected_tag="v$(tr -d '\r\n' < VERSION)"
+          if [[ "$GITHUB_REF_NAME" != "$expected_tag" ]]; then
+            echo "Release tag $GITHUB_REF_NAME does not match VERSION ($expected_tag)." >&2
+            exit 1
+          fi
+
+      - name: Download macOS bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: CodexSkinTool-macOS
+          path: release-assets/macos
+
+      - name: Download Windows bundles
+        uses: actions/download-artifact@v4
+        with:
+          name: CodexSkinTool-Windows
+          path: release-assets/windows
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=(
+            release-assets/macos/macos/*.app.zip
+            release-assets/macos/dmg/*.dmg
+            release-assets/windows/nsis/*.exe
+            release-assets/windows/msi/*.msi
+          )
+
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --verify-tag \
+              --generate-notes \
+              --title "CodexSkinTool $GITHUB_REF_NAME"
+          fi

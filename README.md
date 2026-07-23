@@ -79,7 +79,16 @@ Windows PowerShell：
 npm run tauri -- build --bundles nsis,msi
 ```
 
-输出位于 `src-tauri/target/release/bundle/nsis/` 和 `src-tauri/target/release/bundle/msi/`。仓库 CI 会在 `macos-15` 与 `windows-2025` 上运行完整验证并上传未签名构建产物；正式分发仍需配置 Apple Developer ID、公证和 Windows 代码签名证书。
+输出位于 `src-tauri/target/release/bundle/nsis/` 和 `src-tauri/target/release/bundle/msi/`。仓库 CI 会在 `macos-15` 与 `windows-2025` 上运行完整验证并上传构建产物。
+
+推送与根目录 `VERSION` 一致的 `v*` 标签会在两个平台验证和构建成功后自动创建 GitHub Release：
+
+```bash
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+Release 包含 macOS `.dmg`、`.app.zip` 以及 Windows NSIS `.exe`、MSI `.msi`。当前自动构建未配置正式开发者证书；正式分发仍需配置 Apple Developer ID、公证和 Windows 代码签名证书。
 
 ## 工作原理
 
