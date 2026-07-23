@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import App from "./App";
+import { EditorPage } from "./pages/EditorPage";
+import { mockBootstrap } from "./mock";
 
 describe("CodexSkinTool", () => {
   it("renders the theme library and current theme preview", async () => {
@@ -45,5 +47,49 @@ describe("CodexSkinTool", () => {
     await waitFor(() => expect(confirmRestart).toHaveBeenCalledOnce());
     expect(screen.queryByText("主题预览完成（浏览器模式不写入配置）")).not.toBeInTheDocument();
     confirmRestart.mockRestore();
+  });
+
+  it("edits background brightness and focus with platform-compatible ranges", () => {
+    const onChange = vi.fn();
+    const draft = {
+      ...mockBootstrap.customDraft,
+      name: "带图主题",
+      backgroundImageName: "background.png",
+      backgroundOpacity: 0.4,
+      backgroundBlur: 8,
+      backgroundFit: "contain" as const,
+      backgroundBrightness: 0.85,
+      backgroundFocusX: 0.3,
+      backgroundFocusY: 0.7,
+    };
+
+    render(<EditorPage data={{ ...mockBootstrap, customDraft: draft, customBackgroundUrl: "data:image/png;base64,AA==" }} draft={draft} busy={false} onChange={onChange} onApply={vi.fn()} onRestore={vi.fn()} onSaveDraft={vi.fn()} onSaveToLibrary={vi.fn()} onChooseBackground={vi.fn()} onRemoveBackground={vi.fn()} />);
+
+    const brightness = screen.getByRole("slider", { name: "亮度 85%" });
+    const focusX = screen.getByRole("slider", { name: "水平焦点 30%" });
+    const focusY = screen.getByRole("slider", { name: "垂直焦点 70%" });
+    expect(brightness).toHaveAttribute("min", "0.45");
+    expect(brightness).toHaveAttribute("max", "1.25");
+    expect(brightness).toHaveAttribute("step", "0.05");
+    expect(focusX).toHaveAttribute("min", "0");
+    expect(focusX).toHaveAttribute("max", "1");
+    expect(focusX).toHaveAttribute("step", "0.01");
+    expect(focusY).toHaveAttribute("min", "0");
+    expect(focusY).toHaveAttribute("max", "1");
+    expect(focusY).toHaveAttribute("step", "0.01");
+
+    fireEvent.change(brightness, { target: { value: "1.15" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ backgroundBrightness: 1.15 }));
+    fireEvent.change(focusX, { target: { value: "0.25" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ backgroundFocusX: 0.25 }));
+    fireEvent.change(focusY, { target: { value: "0.75" } });
+    expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ backgroundFocusY: 0.75 }));
+
+    const preview = screen.getByLabelText("带图主题 界面预览");
+    expect(preview.style.getPropertyValue("--preview-opacity")).toBe("0.4");
+    expect(preview.style.getPropertyValue("--preview-blur")).toBe("4px");
+    expect(preview.style.getPropertyValue("--preview-brightness")).toBe("0.85");
+    expect(preview.style.getPropertyValue("--preview-position")).toBe("30% 70%");
+    expect(preview.style.getPropertyValue("--preview-fit")).toBe("contain");
   });
 });

@@ -52,6 +52,9 @@ export function EditorPage(props: EditorPageProps) {
             <Field label="显示方式"><select value={props.draft.backgroundFit} onChange={(event) => update("backgroundFit", event.target.value as CustomThemeDraft["backgroundFit"])}><option value="cover">填充</option><option value="contain">完整显示</option></select></Field>
             <RangeField label={`透明度 ${Math.round(props.draft.backgroundOpacity * 100)}%`} min={8} max={85} value={props.draft.backgroundOpacity * 100} onChange={(value) => update("backgroundOpacity", value / 100)} />
             <RangeField label={`模糊 ${props.draft.backgroundBlur}`} min={0} max={24} value={props.draft.backgroundBlur} onChange={(value) => update("backgroundBlur", value)} />
+            <RangeField label={`亮度 ${Math.round(props.draft.backgroundBrightness * 100)}%`} min={0.45} max={1.25} step={0.05} value={props.draft.backgroundBrightness} onChange={(value) => update("backgroundBrightness", value)} />
+            <RangeField label={`水平焦点 ${Math.round(props.draft.backgroundFocusX * 100)}%`} min={0} max={1} step={0.01} value={props.draft.backgroundFocusX} onChange={(value) => update("backgroundFocusX", value)} />
+            <RangeField label={`垂直焦点 ${Math.round(props.draft.backgroundFocusY * 100)}%`} min={0} max={1} step={0.01} value={props.draft.backgroundFocusY} onChange={(value) => update("backgroundFocusY", value)} />
           </div>}
         </section>
         <button className="button library-button" disabled={props.busy} onClick={props.onSaveToLibrary}><Save size={15} />保存到我的主题</button>
@@ -63,5 +66,5 @@ export function EditorPage(props: EditorPageProps) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) { return <Field label={label}><div className="color-input"><input type="color" value={value} aria-label={label} onChange={(event) => onChange(event.target.value.toUpperCase())} /><code>{value}</code></div></Field>; }
-function RangeField({ label, min, max, value, onChange }: { label: string; min: number; max: number; value: number; onChange: (value: number) => void }) { return <Field label={label}><input type="range" min={min} max={max} value={value} onChange={(event) => onChange(Number(event.target.value))} /></Field>; }
+function RangeField({ label, min, max, step, value, onChange }: { label: string; min: number; max: number; step?: number; value: number; onChange: (value: number) => void }) { return <Field label={label}><input type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} /></Field>; }
 function toTheme(draft: CustomThemeDraft) { return { id: "custom", name: draft.name || "我的主题", description: "自定义配色与代码主题", mode: draft.mode, codeThemeId: draft.codeThemeId, chromeTheme: { accent: draft.accent, ink: draft.ink, surface: draft.surface, contrast: draft.contrast, fonts: { code: null, ui: null }, opaqueWindows: true, semanticColors: { diffAdded: "#32B47A", diffRemoved: "#E5484D", skill: draft.accent } } }; }

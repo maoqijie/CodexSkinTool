@@ -12,6 +12,13 @@ pub const SUPPORTED_CODE_THEMES: &[&str] = &[
     "vercel",
 ];
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackgroundSkinStatus {
+    pub active: bool,
+    pub port: Option<u16>,
+}
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {

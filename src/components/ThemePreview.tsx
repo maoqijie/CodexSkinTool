@@ -16,6 +16,7 @@ export function ThemePreview({ theme, draft, backgroundUrl }: ThemePreviewProps)
     "--preview-image": backgroundUrl ? `url(${backgroundUrl})` : "none",
     "--preview-opacity": String(draft?.backgroundOpacity ?? 0),
     "--preview-blur": `${(draft?.backgroundBlur ?? 0) / 2}px`,
+    "--preview-brightness": String(draft?.backgroundBrightness ?? 1),
     "--preview-position": `${(draft?.backgroundFocusX ?? 0.5) * 100}% ${(draft?.backgroundFocusY ?? 0.5) * 100}%`,
     "--preview-fit": draft?.backgroundFit ?? "cover",
   } as React.CSSProperties;

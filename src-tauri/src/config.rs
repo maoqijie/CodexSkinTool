@@ -82,8 +82,16 @@ impl ConfigStore {
     }
 
     pub fn rollback(&self, checkpoint: ConfigCheckpoint) -> Result<()> {
-        restore_file(&self.paths.config, checkpoint.config, "回滚 Codex 配置")?;
-        restore_file(&self.state_path(), checkpoint.state, "回滚状态")
+        let config = restore_file(&self.paths.config, checkpoint.config, "回滚 Codex 配置");
+        let state = restore_file(&self.state_path(), checkpoint.state, "回滚状态");
+        match (config, state) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(config), Ok(())) => Err(config),
+            (Ok(()), Err(state)) => Err(state),
+            (Err(config), Err(state)) => Err(AppError::InvalidState(format!(
+                "配置与状态回滚均失败：{config}；{state}"
+            ))),
+        }
     }
 
     pub fn read_state(&self) -> Result<Option<PersistedState>> {

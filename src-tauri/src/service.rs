@@ -1,10 +1,11 @@
 use crate::atomic;
+use crate::background::BackgroundSession;
 use crate::catalog;
-use crate::config::{config_exists, ConfigStore};
+use crate::config::{config_exists, ConfigCheckpoint, ConfigStore};
 use crate::error::{AppError, Result};
 use crate::images::ImageStore;
 use crate::library::{ThemeLibrary, ThemeLibraryItem};
-use crate::models::{CustomThemeDraft, Theme};
+use crate::models::{BackgroundSkinStatus, CustomThemeDraft, Theme};
 use crate::paths::AppPaths;
 use crate::platform::{AppStatus, PlatformService};
 use serde::{Deserialize, Serialize};
@@ -12,13 +13,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const REPOSITORY_URL: &str = "https://github.com/maoqijie/CodexSkinTool";
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BackgroundSkinStatus {
-    active: bool,
-    port: Option<u16>,
-}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -90,11 +84,14 @@ impl AppService {
     }
 
     pub fn apply(&self, request: ApplyRequest) -> Result<OperationResult> {
-        let (theme, selected_id) = self.resolve_theme(request)?;
+        let resolved = self.resolve_theme(request)?;
         let before = PlatformService::status();
         let config = self.config();
+        let background = self.background();
+        let previous_background = background.transaction_draft()?;
         let checkpoint = config.checkpoint()?;
-        if let Err(error) = config.apply(&theme, &selected_id, before.is_running) {
+        if let Err(error) = config.apply(&resolved.theme, &resolved.selected_id, before.is_running)
+        {
             config.rollback(checkpoint).map_err(|rollback| {
                 AppError::InvalidState(format!(
                     "主题写入失败（{error}），且无法回滚本次变更（{rollback}）"
@@ -102,37 +99,80 @@ impl AppService {
             })?;
             return Err(error);
         }
-        let message = if before.is_running {
-            if let Err(error) = PlatformService::restart() {
-                config.rollback(checkpoint).map_err(|rollback| {
-                    AppError::InvalidState(format!(
-                        "Codex 重启失败（{error}），且无法回滚本次主题变更（{rollback}）"
-                    ))
-                })?;
-                return Err(error);
-            }
-            config.mark_restarted()?;
-            "主题已应用，Codex 已安全重启"
+        let apply_result = if let Some(draft) = &resolved.background {
+            background
+                .start(draft)
+                .map(|_| "图片主题已应用，Codex 已安全启动".to_string())
         } else {
-            "主题已应用；下次启动 Codex 时生效"
+            background.stop().and_then(|stopped| {
+                if before.is_running || stopped {
+                    PlatformService::restart()?;
+                    Ok("主题已应用，Codex 已安全重启".to_string())
+                } else {
+                    Ok("主题已应用；下次启动 Codex 时生效".to_string())
+                }
+            })
+        };
+        let message = match apply_result.and_then(|message| {
+            config.mark_restarted()?;
+            Ok(message)
+        }) {
+            Ok(message) => message,
+            Err(error) => {
+                return Err(recover_failed_switch(
+                    &config,
+                    checkpoint,
+                    &background,
+                    previous_background,
+                    before.is_running,
+                    error,
+                    "Codex 主题切换失败",
+                ));
+            }
         };
         Ok(OperationResult {
             status: self.status()?,
-            message: message.into(),
+            message,
         })
     }
 
     pub fn restore(&self) -> Result<OperationResult> {
         let before = PlatformService::status();
-        let changed = self.config().restore(before.is_running)?;
-        let message = if !changed {
-            "没有可恢复的外观基线"
-        } else if before.is_running {
-            PlatformService::restart()?;
-            self.config().mark_restarted()?;
-            "原始外观已恢复，Codex 已安全重启"
-        } else {
-            "原始外观已恢复"
+        let background = self.background();
+        let previous_background = background.transaction_draft()?;
+        let config = self.config();
+        let checkpoint = config.checkpoint()?;
+        let result = (|| {
+            let stopped_background = background.stop()?;
+            let changed = config.restore(before.is_running || stopped_background)?;
+            let message = if before.is_running || stopped_background {
+                PlatformService::restart()?;
+                config.mark_restarted()?;
+                if changed {
+                    "原始外观已恢复，Codex 已安全重启"
+                } else {
+                    "图片背景已停止，Codex 已安全重启"
+                }
+            } else if !changed {
+                "没有可恢复的外观基线"
+            } else {
+                "原始外观已恢复"
+            };
+            Ok(message)
+        })();
+        let message = match result {
+            Ok(message) => message,
+            Err(error) => {
+                return Err(recover_failed_switch(
+                    &config,
+                    checkpoint,
+                    &background,
+                    previous_background,
+                    before.is_running,
+                    error,
+                    "恢复原始外观失败",
+                ));
+            }
         };
         Ok(OperationResult {
             status: self.status()?,
@@ -205,18 +245,19 @@ impl AppService {
             can_restore: state.is_some(),
             needs_restart: state.as_ref().is_some_and(|value| value.needs_restart),
             app: PlatformService::status(),
-            background_skin: BackgroundSkinStatus {
-                active: false,
-                port: None,
-            },
+            background_skin: self.background().status(),
         })
     }
 
-    fn resolve_theme(&self, request: ApplyRequest) -> Result<(Theme, String)> {
+    fn resolve_theme(&self, request: ApplyRequest) -> Result<ResolvedTheme> {
         match (request.item_id, request.draft) {
             (Some(id), None) => {
                 if let Some(theme) = catalog::theme_by_id(&id) {
-                    return Ok((theme, id));
+                    return Ok(ResolvedTheme {
+                        theme,
+                        selected_id: id,
+                        background: None,
+                    });
                 }
                 let item = self
                     .library()
@@ -224,25 +265,25 @@ impl AppService {
                     .into_iter()
                     .find(|item| item.id == id)
                     .ok_or_else(|| AppError::InvalidInput(format!("找不到主题：{id}")))?;
-                if item
+                let background = item
                     .custom_draft
-                    .as_ref()
-                    .is_some_and(|draft| draft.background_image_name.is_some())
-                {
-                    return Err(AppError::BackgroundUnsupported(
-                        "安全的跨平台 CDP 进程身份验证尚未完成".into(),
-                    ));
+                    .filter(|draft| draft.background_image_name.is_some());
+                if let Some(draft) = &background {
+                    self.validate_background(draft)?;
                 }
-                Ok((item.theme, item.id))
+                Ok(ResolvedTheme {
+                    theme: item.theme,
+                    selected_id: item.id,
+                    background,
+                })
             }
             (None, Some(draft)) => {
                 self.validate_background(&draft)?;
-                if draft.background_image_name.is_some() {
-                    return Err(AppError::BackgroundUnsupported(
-                        "安全的跨平台 CDP 进程身份验证尚未完成".into(),
-                    ));
-                }
-                Ok((draft.to_theme("custom"), "custom".into()))
+                Ok(ResolvedTheme {
+                    theme: draft.to_theme("custom"),
+                    selected_id: "custom".into(),
+                    background: draft.background_image_name.is_some().then_some(draft),
+                })
             }
             _ => Err(AppError::InvalidInput(
                 "必须且只能指定 itemId 或 draft".into(),
@@ -291,4 +332,56 @@ impl AppService {
     fn images(&self) -> ImageStore {
         ImageStore::new(&self.paths.support)
     }
+    fn background(&self) -> BackgroundSession {
+        BackgroundSession::new(self.paths.clone())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolves_background_for_test(&self, request: ApplyRequest) -> Result<bool> {
+        Ok(self.resolve_theme(request)?.background.is_some())
+    }
+}
+
+struct ResolvedTheme {
+    theme: Theme,
+    selected_id: String,
+    background: Option<CustomThemeDraft>,
+}
+
+fn restore_background(
+    background: &BackgroundSession,
+    previous: Option<CustomThemeDraft>,
+    was_running: bool,
+) -> Result<()> {
+    match previous {
+        Some(draft) => background.start(&draft),
+        None => {
+            background.stop()?;
+            if was_running {
+                PlatformService::restart()?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn recover_failed_switch(
+    config: &ConfigStore,
+    checkpoint: ConfigCheckpoint,
+    background: &BackgroundSession,
+    previous: Option<CustomThemeDraft>,
+    was_running: bool,
+    error: AppError,
+    context: &str,
+) -> AppError {
+    let rollback = config.rollback(checkpoint).err();
+    let restore = restore_background(background, previous, was_running).err();
+    if rollback.is_none() && restore.is_none() {
+        return error;
+    }
+    AppError::InvalidState(format!(
+        "{context}（{error}）；配置回滚：{}；运行态恢复：{}",
+        rollback.map_or_else(|| "成功".into(), |value| value.to_string()),
+        restore.map_or_else(|| "成功".into(), |value| value.to_string())
+    ))
 }

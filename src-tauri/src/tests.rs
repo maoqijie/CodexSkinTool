@@ -284,7 +284,7 @@ fn library_snapshots_background_and_validates_names() {
 }
 
 #[test]
-fn image_theme_application_fails_closed() {
+fn image_theme_is_resolved_for_the_cross_platform_session() {
     let root = TempDir::new().unwrap();
     let service = AppService::isolated(root.path());
     let source = root.path().join("source.png");
@@ -294,11 +294,11 @@ fn image_theme_application_fails_closed() {
     let data = service
         .import_background(&source, CustomThemeDraft::default())
         .unwrap();
-    let error = service
-        .apply(ApplyRequest {
+    let resolved = service
+        .resolves_background_for_test(ApplyRequest {
             item_id: None,
             draft: Some(data.custom_draft),
         })
-        .unwrap_err();
-    assert!(matches!(error, AppError::BackgroundUnsupported(_)));
+        .unwrap();
+    assert!(resolved);
 }

@@ -26,9 +26,11 @@ CodexSkinTool 只控制与已发现安装的规范化可执行路径完全匹配
 
 ## Image backgrounds
 
-图片背景不属于 Codex 的受支持外观配置。当前 Tauri 版本只允许导入、完整解码、限制大小和尺寸、转换为私有 PNG，以及在 CodexSkinTool 内预览或保存。应用包含图片的草稿或资料库主题时会 fail closed，并返回“跨平台 CDP 进程身份验证尚未完成”；它不会开启调试端口或执行未经验证的注入。
+图片背景不属于 Codex 的受支持外观配置。图片导入会完整解码、限制大小和尺寸，并转换成私有 PNG。应用图片主题时，工具先验证官方 Codex 签名，只允许 `127.0.0.1` 的 CDP listener，并保存 PID、启动时间、可执行路径和进程树归属。listener 无法回溯到本次启动的官方进程时会立即失败回滚。
 
-旧 Swift 实现包含 macOS 专用 CDP 注入器，但它仅作为 legacy 行为基准保留，不属于当前 Tauri 发布链。恢复这项能力前，需要在 macOS 和 Windows 上完成调试端点、页面身份、进程归属和生命周期的联合验证。
+helper 只接受 `/json/list` 返回的 `app://` page；WebSocket 必须使用 `ws`、本机 host、会话端口和 `/devtools/page/<target-id>`，且不得包含凭据、query 或 fragment。注入前要求 Codex 主界面、侧栏和 main role DOM 同时存在；注入后通过 computed style 验证图片、透明度、亮度、焦点和 `pointer-events: none`。私有 lease 被删除后 helper 自动退出，并持续轮询以处理 renderer 重载。
+
+停止会话时，只结束 PID 与启动时间仍匹配、可执行路径仍位于已验证安装根、父链仍属于会话的进程；身份发生变化时拒绝结束未知 PID。Windows Store/AppX/MSIX 图片模式当前 fail closed，因为包激活需要额外 AUMID 身份与参数传递验证。
 
 ## Release artifacts
 

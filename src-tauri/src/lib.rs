@@ -1,5 +1,10 @@
 mod atomic;
+mod background;
+mod background_helper;
+mod background_legacy;
+mod background_runtime;
 mod catalog;
+mod cdp;
 mod commands;
 mod config;
 mod error;
@@ -8,6 +13,9 @@ mod library;
 mod models;
 mod paths;
 mod platform;
+mod platform_install;
+mod process_identity;
+mod process_identity_windows;
 mod service;
 
 #[cfg(test)]
@@ -32,4 +40,8 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run CodexSkinTool");
+}
+
+pub fn run_background_helper_if_requested() -> bool {
+    background_helper::run_if_requested()
 }

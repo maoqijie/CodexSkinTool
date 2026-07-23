@@ -47,7 +47,7 @@ export const mockBootstrap: BootstrapData = {
     backgroundBrightness: 1, backgroundFocusX: 0.5, backgroundFocusY: 0.5,
   },
   customBackgroundUrl: null,
-  version: "1.1.0",
+  version: "1.2.0",
   repositoryUrl: "https://github.com/maoqijie/CodexSkinTool",
   supportedCodeThemeIds: ["codex", "github", "notion", "solarized", "tokyo-night", "rose-pine", "dracula", "everforest", "vercel"],
 };
