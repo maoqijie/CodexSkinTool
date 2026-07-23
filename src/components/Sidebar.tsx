@@ -19,7 +19,7 @@ export function Sidebar({ section, status, onNavigate }: SidebarProps) {
     <aside className="sidebar">
       <div className="brand">
         <span className="brand-mark"><Palette size={17} strokeWidth={2.2} /></span>
-        <span><strong>CodexSkinTool</strong><small>跨平台主题管理</small></span>
+        <strong>CodexSkinTool</strong>
       </div>
       <nav className="navigation" aria-label="主导航">
         {navigation.map(({ id, label, icon: Icon }) => (

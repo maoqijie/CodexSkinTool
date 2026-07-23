@@ -284,6 +284,44 @@ fn library_snapshots_background_and_validates_names() {
 }
 
 #[test]
+fn library_renames_and_restores_built_in_themes() {
+    let root = TempDir::new().unwrap();
+    let library = ThemeLibrary::new(root.path());
+    let built_in = library
+        .items()
+        .unwrap()
+        .into_iter()
+        .find(|item| item.kind == ThemeKind::BuiltIn)
+        .unwrap();
+
+    library.rename(&built_in.id, "我的内置主题").unwrap();
+    assert_eq!(
+        library
+            .items()
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == built_in.id)
+            .unwrap()
+            .theme
+            .name,
+        "我的内置主题"
+    );
+
+    library.restore_built_ins().unwrap();
+    assert_eq!(
+        library
+            .items()
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == built_in.id)
+            .unwrap()
+            .theme
+            .name,
+        built_in.theme.name
+    );
+}
+
+#[test]
 fn image_theme_is_resolved_for_the_cross_platform_session() {
     let root = TempDir::new().unwrap();
     let service = AppService::isolated(root.path());

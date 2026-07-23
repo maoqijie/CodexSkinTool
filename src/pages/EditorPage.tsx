@@ -22,7 +22,7 @@ export function EditorPage(props: EditorPageProps) {
   const theme = toTheme(props.draft);
   return (
     <div className="page-shell">
-      <header className="page-header"><div><h1>自定义</h1><p>调整颜色、代码主题和本地背景，预览会即时更新。</p></div>
+      <header className="page-header"><h1>自定义</h1>
         <button className="button secondary" disabled={props.busy} onClick={props.onSaveDraft}><Save size={15} />保存草稿</button>
       </header>
       <main className="page-scroll editor-page">

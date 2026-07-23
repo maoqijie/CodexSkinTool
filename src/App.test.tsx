@@ -25,6 +25,22 @@ describe("CodexSkinTool", () => {
     expect(screen.getByRole("button", { name: "应用当前配置" })).toBeEnabled();
   });
 
+  it("keeps the interface free of redundant explanatory copy", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "换肤" });
+
+    expect(screen.queryByText("跨平台主题管理")).not.toBeInTheDocument();
+    expect(screen.queryByText("选择一套主题，先预览，再安全应用到 Codex Desktop。")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "自定义" }));
+    expect(screen.queryByText("调整颜色、代码主题和本地背景，预览会即时更新。")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "关于" }));
+    expect(screen.queryByText("跨平台的 Codex Desktop 本地换肤工具。")).not.toBeInTheDocument();
+    expect(screen.queryByText("同一套工程")).not.toBeInTheDocument();
+    expect(screen.queryByText("本地与可恢复")).not.toBeInTheDocument();
+  });
+
   it("updates the preview when another theme is selected", async () => {
     render(<App />);
     const library = await screen.findByRole("region", { name: "主题库" });
@@ -35,6 +51,27 @@ describe("CodexSkinTool", () => {
     expect(screen.getByLabelText("GitHub 明亮 界面预览")).toBeInTheDocument();
     expect(screen.getByText("github")).toBeInTheDocument();
     expect(screen.getByText("#0969DA")).toBeInTheDocument();
+  });
+
+  it("offers rename for built-in themes and confirms before deletion", async () => {
+    const renamePrompt = vi.spyOn(window, "prompt").mockReturnValue(null);
+    const deleteConfirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<App />);
+    await screen.findByRole("region", { name: "主题库" });
+
+    fireEvent.click(screen.getByRole("button", { name: "重命名 Codex 明亮" }));
+    expect(renamePrompt).toHaveBeenCalledWith("主题名称", "Codex 明亮");
+
+    fireEvent.click(screen.getByRole("button", { name: "删除 Codex 明亮" }));
+    expect(deleteConfirm).toHaveBeenCalledWith(expect.stringContaining("删除“Codex 明亮”"));
+    expect(screen.queryByText("主题已删除")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "删除 Codex 明亮" }));
+    expect(await screen.findByText("主题已删除")).toBeInTheDocument();
+    expect(deleteConfirm).toHaveBeenCalledTimes(2);
+
+    renamePrompt.mockRestore();
+    deleteConfirm.mockRestore();
   });
 
   it("requires confirmation before restarting a running Codex instance", async () => {

@@ -22,7 +22,7 @@ export function ThemeCard({ item, selected, active, onSelect, onRename, onDelete
         {active && <span className="active-theme"><Check size={12} />当前</span>}
       </button>
       <span className="card-tools">
-        {item.kind === "custom" && <button title="重命名" aria-label={`重命名 ${item.theme.name}`} onClick={onRename}><Pencil size={14} /></button>}
+        <button title="重命名" aria-label={`重命名 ${item.theme.name}`} onClick={onRename}><Pencil size={14} /></button>
         <button title="删除" aria-label={`删除 ${item.theme.name}`} onClick={onDelete}><Trash2 size={14} /></button>
       </span>
     </article>

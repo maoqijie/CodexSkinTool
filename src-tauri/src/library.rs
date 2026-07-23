@@ -4,7 +4,7 @@ use crate::error::{AppError, Result};
 use crate::images::ImageStore;
 use crate::models::{CustomThemeDraft, Theme};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -39,6 +39,7 @@ struct LibraryState {
     version: u8,
     #[serde(alias = "hiddenBuiltInIDs")]
     hidden_built_in_ids: HashSet<String>,
+    built_in_names: HashMap<String, String>,
     custom_themes: Vec<SavedCustomTheme>,
 }
 
@@ -58,8 +59,11 @@ impl ThemeLibrary {
     pub fn items(&self) -> Result<Vec<ThemeLibraryItem>> {
         let state = self.load()?;
         let mut items = Vec::new();
-        for theme in catalog::built_in_themes() {
+        for mut theme in catalog::built_in_themes() {
             if !state.hidden_built_in_ids.contains(&theme.id) {
+                if let Some(name) = state.built_in_names.get(&theme.id) {
+                    theme.name.clone_from(name);
+                }
                 items.push(ThemeLibraryItem {
                     id: theme.id.clone(),
                     kind: ThemeKind::BuiltIn,
@@ -118,20 +122,21 @@ impl ThemeLibrary {
 
     pub fn rename(&self, id: &str, name: &str) -> Result<()> {
         let normalized = name.trim();
-        if normalized.is_empty()
-            || normalized.chars().count() > 40
-            || normalized.chars().any(char::is_control)
-        {
+        if !valid_name(normalized) {
             return Err(AppError::InvalidInput(
                 "主题名称必须为 1 到 40 个非控制字符".into(),
             ));
         }
         let mut state = self.load()?;
+        if catalog::theme_by_id(id).is_some() {
+            state.built_in_names.insert(id.into(), normalized.into());
+            return self.write(&state);
+        }
         let item = state
             .custom_themes
             .iter_mut()
             .find(|item| item.id == id)
-            .ok_or_else(|| AppError::InvalidInput("只能重命名已保存的自定义主题".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("主题不存在".into()))?;
         item.draft.name = normalized.into();
         self.write(&state)
     }
@@ -139,6 +144,7 @@ impl ThemeLibrary {
     pub fn restore_built_ins(&self) -> Result<()> {
         let mut state = self.load()?;
         state.hidden_built_in_ids.clear();
+        state.built_in_names.clear();
         self.write(&state)
     }
 
@@ -161,6 +167,10 @@ impl ThemeLibrary {
         let valid = state.version == 1
             && ids.len() == state.custom_themes.len()
             && state
+                .built_in_names
+                .iter()
+                .all(|(id, name)| catalog::theme_by_id(id).is_some() && valid_name(name))
+            && state
                 .custom_themes
                 .iter()
                 .all(|item| item.id.starts_with("user-"))
@@ -177,4 +187,11 @@ impl ThemeLibrary {
     fn write(&self, state: &LibraryState) -> Result<()> {
         atomic::write_private(&self.path, &serde_json::to_vec_pretty(state)?)
     }
+}
+
+fn valid_name(name: &str) -> bool {
+    let normalized = name.trim();
+    !normalized.is_empty()
+        && normalized.chars().count() <= 40
+        && !normalized.chars().any(char::is_control)
 }

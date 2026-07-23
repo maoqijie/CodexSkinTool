@@ -36,7 +36,7 @@ export function ThemesPage(props: ThemesPageProps) {
 
   return (
     <div className="page-shell">
-      <header className="page-header"><div><h1>换肤</h1><p>选择一套主题，先预览，再安全应用到 Codex Desktop。</p></div>
+      <header className="page-header"><h1>换肤</h1>
         <button className="button secondary" disabled={props.busy} onClick={props.onRestoreBuiltIns}><RotateCcw size={15} />恢复内置主题</button>
       </header>
       <main className="page-scroll themes-page">

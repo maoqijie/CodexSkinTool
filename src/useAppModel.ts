@@ -59,6 +59,24 @@ export function useAppModel() {
     }
   };
 
+  const deleteTheme = async (id: string) => {
+    const item = data?.themes.find((theme) => theme.id === id);
+    const name = item?.theme.name ?? "此主题";
+    const message = item?.kind === "builtIn"
+      ? `删除“${name}”后，可通过“恢复内置主题”找回。`
+      : `删除“${name}”及其背景图片副本后无法撤销。`;
+    try {
+      const approved = desktop.isTauri()
+        ? await confirm(message, { title: "确认删除主题？", kind: "warning" })
+        : window.confirm(`确认删除主题？\n\n${message}`);
+      if (approved) {
+        await run(() => desktop.isTauri() ? desktop.deleteTheme(id) : simulated("主题已删除"));
+      }
+    } catch (cause) {
+      setError(messageOf(cause));
+    }
+  };
+
   const applySelected = async () => {
     if (!await confirmRestart()) return;
     await run(() => desktop.isTauri()
@@ -86,7 +104,7 @@ export function useAppModel() {
     busy, notice, error, applySelected, applyDraft, restore, saveDraft, saveToLibrary,
     chooseBackground,
     removeBackground: () => draft && run(() => desktop.isTauri() ? desktop.removeBackground(draft) : simulated("背景图片已移除")),
-    deleteTheme: (id: string) => run(() => desktop.isTauri() ? desktop.deleteTheme(id) : simulated("主题已删除")),
+    deleteTheme,
     renameTheme: (id: string, name: string) => run(() => desktop.isTauri() ? desktop.renameTheme(id, name) : simulated("主题已重命名")),
     restoreBuiltIns: () => run(() => desktop.isTauri() ? desktop.restoreBuiltIns() : simulated("内置主题已恢复")),
     clearError: () => setError(undefined),
