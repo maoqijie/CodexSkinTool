@@ -81,16 +81,16 @@ jobs:
           codesign --force --deep --sign - src-tauri/target/release/bundle/macos/CodexSkinTool.app
           codesign --verify --deep --strict --verbose=2 src-tauri/target/release/bundle/macos/CodexSkinTool.app
 
-      - name: Build macOS disk image
-        if: runner.os == 'macOS'
-        run: npm run tauri -- build --bundles dmg
-
       - name: Package macOS application archive
         if: runner.os == 'macOS'
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             src-tauri/target/release/bundle/macos/CodexSkinTool.app \
             src-tauri/target/release/bundle/macos/CodexSkinTool.app.zip
+
+      - name: Build macOS disk image
+        if: runner.os == 'macOS'
+        run: npm run tauri -- build --bundles dmg
 
       - name: Build Windows installers
         if: runner.os == 'Windows'
